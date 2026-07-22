@@ -1,10 +1,18 @@
 # Investment Rebalancing Assistant
 
 A small installable PWA that replaces the "LGH" tab of your Excel notes. Set a target
-allocation, enter your current holdings, and it tells you what to buy or sell to get
-back on target. All data is stored locally in your browser (localStorage) — nothing
-is sent to a server. Use the Export/Import buttons to back up or move data between
-devices.
+allocation, enter your current holdings, enter the cash you have available to invest,
+and it recommends where that cash should go this round. It never suggests selling —
+only how to deploy new money toward your most underweight positions. All data is
+stored locally in your browser (localStorage) — nothing is sent to a server. Use the
+Export/Import buttons to back up or move data between devices.
+
+**Allocation logic (greedy waterfall):** positions are ranked by how far below target
+they are, in dollar terms. Cash is used to fully close the gap for the most underweight
+position first, then the next, and so on. If there isn't enough cash left to *fully*
+close a position's gap, that position is skipped this round (not partially funded) and
+whatever's left over is reported as unallocated. Overweight positions never receive
+money and are never sold.
 
 ## Run it locally
 

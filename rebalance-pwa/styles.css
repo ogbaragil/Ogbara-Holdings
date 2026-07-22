@@ -136,6 +136,20 @@ td:last-child, th:last-child {
   font-style: italic;
 }
 
+.skipped {
+  color: var(--muted);
+}
+
+#cashInput {
+  font-size: 1.4rem;
+  padding: 12px;
+  text-align: center;
+}
+
+#planSummary {
+  margin-bottom: 10px;
+}
+
 footer {
   position: fixed;
   bottom: 0;

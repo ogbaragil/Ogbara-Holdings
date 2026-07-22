@@ -1,7 +1,14 @@
 // Investment Rebalancing Assistant
 // All data lives in localStorage. Nothing is sent anywhere.
+//
+// Workflow: set a target allocation, enter current holdings, enter cash
+// available to invest, and get a buy-only recommendation for where the new
+// cash should go (greedy waterfall: fully fund the most underweight ticker
+// first, then the next, etc. A ticker is skipped - not partially funded -
+// if there isn't enough remaining cash to fully close its gap. Existing
+// holdings are never sold.)
 
-const STORAGE_KEY = 'rebalance-assistant-data-v1';
+const STORAGE_KEY = 'rebalance-assistant-data-v2';
 
 const DEFAULT_DATA = {
   targets: [
@@ -19,8 +26,8 @@ const DEFAULT_DATA = {
     { ticker: 'NVDA', value: 1195 },
     { ticker: 'AIR.PA', value: 844 },
     { ticker: 'GOOG', value: 1194 },
-    { ticker: 'CASH', value: 3018 },
   ],
+  cash: 3018,
   lastUpdated: new Date().toISOString(),
 };
 
@@ -44,6 +51,10 @@ function saveState() {
 
 function fmtMoney(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+function fmtMoneyPrecise(n) {
+  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 }
 
 function fmtPct(n) {
@@ -85,10 +96,11 @@ function renderTargets() {
 function renderHoldings() {
   const tbody = document.querySelector('#holdingsTable tbody');
   tbody.innerHTML = '';
-  const total = state.holdings.reduce((s, r) => s + r.value, 0);
+  const holdingsTotal = state.holdings.reduce((s, r) => s + r.value, 0);
+  const portfolioTotal = holdingsTotal + (state.cash || 0);
 
   state.holdings.forEach((row, idx) => {
-    const weight = total > 0 ? row.value / total : 0;
+    const weight = portfolioTotal > 0 ? row.value / portfolioTotal : 0;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-ticker"></td>
@@ -99,56 +111,102 @@ function renderHoldings() {
     tbody.appendChild(tr);
   });
 
-  document.getElementById('holdingsTotal').textContent = fmtMoney(total);
+  document.getElementById('holdingsTotal').textContent = fmtMoney(holdingsTotal);
 }
 
-// ---------- Rebalancing results ----------
+function renderCash() {
+  document.getElementById('cashInput').value = state.cash;
+}
+
+// ---------- Recommended purchases (greedy waterfall) ----------
+
+function computePlan() {
+  const holdingsTotal = state.holdings.reduce((s, r) => s + r.value, 0);
+  const cash = state.cash || 0;
+  const newTotal = holdingsTotal + cash;
+  const holdingsByTicker = new Map(state.holdings.map(h => [h.ticker.toUpperCase(), h.value]));
+
+  const rows = state.targets.map(t => {
+    const ticker = t.ticker.toUpperCase();
+    const currentValue = holdingsByTicker.get(ticker) || 0;
+    // current weight relative to the portfolio as it stands today (before investing cash)
+    const currentWeightToday = holdingsTotal > 0 ? currentValue / holdingsTotal : 0;
+    const targetValue = t.weight * newTotal;
+    const gap = targetValue - currentValue;
+    return { ticker: t.ticker, currentValue, currentWeightToday, targetWeight: t.weight, gap };
+  });
+
+  // Rank by gap descending (most underweight first). Only positive gaps are candidates to buy.
+  const ranked = [...rows].sort((a, b) => b.gap - a.gap);
+
+  let remaining = cash;
+  const buys = new Map();
+  ranked.forEach(r => {
+    if (r.gap <= 0) {
+      buys.set(r.ticker, 0);
+      return;
+    }
+    if (remaining >= r.gap - 1e-9) {
+      buys.set(r.ticker, r.gap);
+      remaining -= r.gap;
+    } else {
+      buys.set(r.ticker, 0); // can't fully close the gap this round - skip, don't partial-fund
+    }
+  });
+
+  const planRows = rows.map(r => {
+    const buy = buys.get(r.ticker) || 0;
+    const projectedValue = r.currentValue + buy;
+    const projectedWeight = newTotal > 0 ? projectedValue / newTotal : 0;
+    const skippedForCash = r.gap > 0 && buy === 0;
+    return { ...r, buy, projectedWeight, skippedForCash };
+  });
+
+  // Sort display by gap descending too, so priority order is visible
+  planRows.sort((a, b) => b.gap - a.gap);
+
+  return { rows: planRows, leftover: Math.max(remaining, 0), newTotal, cash };
+}
 
 function renderResults() {
+  const plan = computePlan();
   const tbody = document.querySelector('#resultsTable tbody');
   tbody.innerHTML = '';
 
-  const total = state.holdings.reduce((s, r) => s + r.value, 0);
-  const holdingsByTicker = new Map(state.holdings.map(h => [h.ticker.toUpperCase(), h.value]));
-  const targetTickers = new Set(state.targets.map(t => t.ticker.toUpperCase()));
-
-  // Rows for each target ticker
-  state.targets.forEach(t => {
-    const ticker = t.ticker.toUpperCase();
-    const currentValue = holdingsByTicker.get(ticker) || 0;
-    const currentWeight = total > 0 ? currentValue / total : 0;
-    const targetValue = t.weight * total;
-    const diff = targetValue - currentValue;
-    tbody.appendChild(resultRow(t.ticker, currentValue, currentWeight, t.weight, targetValue, diff, false));
+  plan.rows.forEach(r => {
+    const tr = document.createElement('tr');
+    let buyCell;
+    if (r.gap <= 0) {
+      buyCell = '<span class="skipped">No purchase needed</span>';
+    } else if (r.skippedForCash) {
+      buyCell = '<span class="skipped">Not this round (not enough cash left)</span>';
+    } else {
+      buyCell = `<span class="positive">${fmtMoneyPrecise(r.buy)}</span>`;
+    }
+    tr.innerHTML = `
+      <td>${r.ticker}</td>
+      <td>${fmtMoney(r.currentValue)}</td>
+      <td>${fmtPct(r.currentWeightToday)}</td>
+      <td>${fmtPct(r.targetWeight)}</td>
+      <td>${buyCell}</td>
+      <td>${fmtPct(r.projectedWeight)}</td>
+    `;
+    tbody.appendChild(tr);
   });
 
-  // Rows for holdings not in the target list (e.g. CASH) - fully reallocated
-  state.holdings.forEach(h => {
-    const ticker = h.ticker.toUpperCase();
-    if (targetTickers.has(ticker)) return;
-    const currentWeight = total > 0 ? h.value / total : 0;
-    tbody.appendChild(resultRow(h.ticker, h.value, currentWeight, 0, 0, -h.value, true));
-  });
-}
+  document.getElementById('planSummary').textContent =
+    `Investing ${fmtMoney(plan.cash)} across your most underweight positions.`;
 
-function resultRow(ticker, currentValue, currentWeight, targetWeight, targetValue, diff, notInTarget) {
-  const tr = document.createElement('tr');
-  const diffClass = diff > 0.5 ? 'positive' : diff < -0.5 ? 'negative' : '';
-  const diffLabel = diff >= 0 ? `Buy ${fmtMoney(diff)}` : `Sell ${fmtMoney(Math.abs(diff))}`;
-  tr.innerHTML = `
-    <td>${ticker}${notInTarget ? ' <span class="not-in-target">(not in target)</span>' : ''}</td>
-    <td>${fmtMoney(currentValue)}</td>
-    <td>${fmtPct(currentWeight)}</td>
-    <td>${notInTarget ? '—' : fmtPct(targetWeight)}</td>
-    <td>${notInTarget ? '—' : fmtMoney(targetValue)}</td>
-    <td class="${diffClass}">${diffLabel}</td>
-  `;
-  return tr;
+  const leftoverEl = document.getElementById('leftoverCash');
+  leftoverEl.textContent = plan.leftover > 0.01
+    ? `${fmtMoneyPrecise(plan.leftover)} left unallocated this round (not enough to fully fund the next underweight position).`
+    : '';
 }
 
 function renderAll() {
   renderTargets();
   renderHoldings();
+  renderCash();
   renderResults();
   renderLastUpdated();
 }
@@ -157,6 +215,14 @@ function renderAll() {
 
 document.addEventListener('input', (e) => {
   const idx = e.target.dataset.idx;
+
+  if (e.target.id === 'cashInput') {
+    state.cash = parseFloat(e.target.value) || 0;
+    saveState();
+    renderResults();
+    return;
+  }
+
   if (idx === undefined) return;
 
   if (e.target.classList.contains('target-ticker')) {
@@ -166,8 +232,8 @@ document.addEventListener('input', (e) => {
   } else if (e.target.classList.contains('target-weight')) {
     state.targets[idx].weight = (parseFloat(e.target.value) || 0) / 100;
     saveState();
-    document.getElementById('targetTotal').textContent = fmtPct(state.targets.reduce((s, r) => s + r.weight, 0));
     const total = state.targets.reduce((s, r) => s + r.weight, 0);
+    document.getElementById('targetTotal').textContent = fmtPct(total);
     const warning = document.getElementById('targetWarning');
     warning.textContent = Math.abs(total - 1) > 0.001
       ? `Target weights sum to ${fmtPct(total)}, not 100%. Adjust before relying on the plan below.`
@@ -230,6 +296,7 @@ document.getElementById('importFile').addEventListener('change', (e) => {
     try {
       const imported = JSON.parse(reader.result);
       if (!imported.targets || !imported.holdings) throw new Error('Missing targets/holdings');
+      if (typeof imported.cash !== 'number') imported.cash = 0;
       state = imported;
       saveState();
       renderAll();

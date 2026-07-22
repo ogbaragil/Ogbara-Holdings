@@ -53,8 +53,16 @@
 
   <section class="card">
     <div class="card-header">
-      <h2>Rebalancing Plan</h2>
+      <h2>Available Cash to Invest</h2>
     </div>
+    <input type="number" step="0.01" id="cashInput" placeholder="0.00">
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Recommended Purchases</h2>
+    </div>
+    <div class="subtitle" id="planSummary"></div>
     <table id="resultsTable">
       <thead>
         <tr>
@@ -62,12 +70,13 @@
           <th>Current $</th>
           <th>Current %</th>
           <th>Target %</th>
-          <th>Target $</th>
-          <th>Buy / (Sell)</th>
+          <th>Buy</th>
+          <th>Projected %</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
+    <div class="warning" id="leftoverCash"></div>
   </section>
 
 </main>
