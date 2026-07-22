@@ -3,90 +3,216 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
-<title>Investment Rebalancing Assistant</title>
+<meta name="theme-color" content="#f5f7fb">
+<title>Allocate — Investment Rebalancing Assistant</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <h1>Investment Rebalancing Assistant</h1>
-  <div class="subtitle" id="lastUpdated"></div>
-</header>
 
-<main>
+<div class="app">
 
-  <section class="card">
-    <div class="card-header">
-      <h2>Target Allocation</h2>
-      <button class="btn-small" id="addTargetRow">+ Add ticker</button>
-    </div>
-    <table id="targetTable">
-      <thead>
-        <tr><th>Ticker</th><th>Target %</th><th></th></tr>
-      </thead>
-      <tbody></tbody>
-      <tfoot>
-        <tr><td>Total</td><td id="targetTotal">0%</td><td></td></tr>
-      </tfoot>
-    </table>
-    <div class="warning" id="targetWarning"></div>
-  </section>
+  <header class="topbar">
+    <button class="back-btn" id="backBtn" aria-label="Back">&#8249;</button>
+    <div class="topbar-title">Allocate</div>
+    <div class="topbar-spacer"></div>
+  </header>
 
-  <section class="card">
-    <div class="card-header">
-      <h2>Current Holdings</h2>
-      <button class="btn-small" id="addHoldingRow">+ Add holding</button>
-    </div>
-    <table id="holdingsTable">
-      <thead>
-        <tr><th>Ticker</th><th>Value ($)</th><th>Weight</th><th></th></tr>
-      </thead>
-      <tbody></tbody>
-      <tfoot>
-        <tr><td>Total</td><td id="holdingsTotal">$0</td><td></td><td></td></tr>
-      </tfoot>
-    </table>
-  </section>
+  <main id="views">
 
-  <section class="card">
-    <div class="card-header">
-      <h2>Available Cash to Invest</h2>
-    </div>
-    <input type="number" step="0.01" id="cashInput" placeholder="0.00">
-  </section>
+    <!-- PORTFOLIO -->
+    <section class="view" id="view-portfolio">
+      <div class="value-block">
+        <div class="value-label">Total Portfolio Value</div>
+        <div class="value-amount" id="portfolioValue">$0</div>
+      </div>
 
-  <section class="card">
-    <div class="card-header">
-      <h2>Recommended Purchases</h2>
-    </div>
-    <div class="subtitle" id="planSummary"></div>
-    <table id="resultsTable">
-      <thead>
-        <tr>
-          <th>Ticker</th>
-          <th>Current $</th>
-          <th>Current %</th>
-          <th>Target %</th>
-          <th>Buy</th>
-          <th>Projected %</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-    <div class="warning" id="leftoverCash"></div>
-  </section>
+      <div class="card">
+        <div class="card-title-row">
+          <h2>Current Allocation</h2>
+        </div>
+        <div class="donut-row">
+          <svg viewBox="0 0 120 120" class="donut" id="donutChart"></svg>
+          <div class="donut-legend" id="donutLegend"></div>
+        </div>
+      </div>
 
-</main>
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-label">Available to invest</div>
+          <div class="stat-value" id="statCash">$0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Target accuracy</div>
+          <div class="stat-value" id="statAccuracy">0%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Holdings</div>
+          <div class="stat-value" id="statHoldings">0</div>
+        </div>
+      </div>
 
-<footer>
-  <button id="exportBtn">Export JSON</button>
-  <button id="importBtn">Import JSON</button>
-  <button id="resetBtn" class="danger">Reset</button>
-  <input type="file" id="importFile" accept="application/json" hidden>
-</footer>
+      <div class="card">
+        <div class="card-title-row"><h2>Holdings</h2></div>
+        <table class="plain-table">
+          <thead>
+            <tr><th>Ticker</th><th>Value</th><th>Current %</th><th>Target %</th></tr>
+          </thead>
+          <tbody id="portfolioHoldingsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TARGETS -->
+    <section class="view" id="view-targets" hidden>
+      <h1 class="view-title">Targets</h1>
+      <p class="view-subtitle">Set your target allocation</p>
+
+      <div class="card">
+        <div id="targetRows"></div>
+        <button class="link-btn" id="addTargetRow">+ Add ticker</button>
+        <div class="totals-line">Total <span id="targetTotal">0%</span></div>
+        <div class="warning" id="targetWarning"></div>
+      </div>
+
+      <div class="card">
+        <div class="field-row">
+          <div class="field-icon">&#128179;</div>
+          <div class="field-body">
+            <label for="cashInput">Cash to invest</label>
+            <input type="number" step="0.01" id="cashInput" placeholder="0.00">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="toggle-row disabled">
+          <div>
+            <div class="toggle-label">New contributions only</div>
+            <div class="toggle-sub">This app never sells existing holdings</div>
+          </div>
+          <div class="toggle-pill on">On</div>
+        </div>
+        <div class="field-row">
+          <div class="field-body">
+            <label for="maxTradesInput">Max trades</label>
+            <div class="toggle-sub">Limit how many positions get a buy this round</div>
+          </div>
+          <input type="number" min="1" step="1" id="maxTradesInput" class="small-input">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="holdings-edit-header">
+          <h2>Current Holdings</h2>
+          <button class="link-btn" id="addHoldingRow">+ Add</button>
+        </div>
+        <div id="holdingRows"></div>
+        <div class="totals-line">Total <span id="holdingsTotal">$0</span></div>
+      </div>
+
+      <button class="primary-btn" id="generatePlanBtn">Generate Plan</button>
+    </section>
+
+    <!-- PLAN: step 1 recommendation -->
+    <section class="view" id="view-plan-recommend" hidden>
+      <div class="status-line good">
+        <span class="status-icon">&#10003;</span>
+        <h1 class="view-title inline">Recommended buys</h1>
+      </div>
+      <p class="view-subtitle" id="recommendSubtitle">Use your cash to move closer to target.</p>
+
+      <div id="recommendCards"></div>
+
+      <div class="info-callout" id="skipCallout" hidden></div>
+
+      <div class="card totals-card">
+        <div class="totals-card-label">Total to invest</div>
+        <div class="totals-card-amount" id="totalToInvest">$0</div>
+        <div class="totals-card-sub" id="totalToInvestPct"></div>
+      </div>
+
+      <button class="primary-btn" id="reviewAllocationBtn">Review Allocation</button>
+    </section>
+
+    <!-- PLAN: step 2 projected allocation -->
+    <section class="view" id="view-plan-projected" hidden>
+      <h1 class="view-title">Projected Allocation</h1>
+      <p class="view-subtitle" id="projectedSubtitle">Comparison after investing</p>
+
+      <div class="info-callout good" id="accuracyCallout"></div>
+
+      <table class="compare-table">
+        <thead>
+          <tr><th>Ticker</th><th>Target</th><th>Current</th><th>After</th></tr>
+        </thead>
+        <tbody id="compareBody"></tbody>
+      </table>
+
+      <div class="legend-row">
+        <span><i class="dot below"></i> Below target</span>
+        <span><i class="dot current"></i> At/Above current</span>
+        <span><i class="dot target"></i> At target</span>
+      </div>
+
+      <div class="info-callout" id="meaningCallout">
+        <strong>What this means</strong>
+        <div>Your portfolio is better aligned with your targets.</div>
+      </div>
+
+      <button class="primary-btn" id="savePlanBtn">Save Plan</button>
+    </section>
+
+    <!-- ACTIVITY -->
+    <section class="view" id="view-activity" hidden>
+      <h1 class="view-title">Activity</h1>
+      <p class="view-subtitle">Plans you've saved</p>
+      <div id="activityList"></div>
+      <div class="empty-state" id="activityEmpty">No saved plans yet.</div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings" hidden>
+      <h1 class="view-title">Settings</h1>
+
+      <div class="card">
+        <div class="card-title-row"><h2>Data</h2></div>
+        <button class="row-btn" id="exportBtn">Export JSON</button>
+        <button class="row-btn" id="importBtn">Import JSON</button>
+        <button class="row-btn danger" id="resetBtn">Reset to defaults</button>
+        <input type="file" id="importFile" accept="application/json" hidden>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row"><h2>About</h2></div>
+        <p class="about-text">All data is stored only on this device. Nothing is sent to a server. Use Export/Import to move data between devices.</p>
+        <p class="about-text" id="lastUpdated"></p>
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab" data-tab="portfolio">
+      <span class="tab-icon">&#8962;</span><span>Portfolio</span>
+    </button>
+    <button class="tab" data-tab="targets">
+      <span class="tab-icon">&#8982;</span><span>Targets</span>
+    </button>
+    <button class="tab" data-tab="plan">
+      <span class="tab-icon">&#9776;</span><span>Plan</span>
+    </button>
+    <button class="tab" data-tab="activity">
+      <span class="tab-icon">&#9741;</span><span>Activity</span>
+    </button>
+    <button class="tab" data-tab="settings">
+      <span class="tab-icon">&#9881;</span><span>Settings</span>
+    </button>
+  </nav>
+
+</div>
 
 <script src="app.js"></script>
 </body>
