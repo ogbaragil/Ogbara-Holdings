@@ -48,9 +48,21 @@ const DEFAULT_DATA = {
   ],
   cash: 3018,
   maxTrades: 6,
+  currency: 'USD',
   activity: [],
   lastUpdated: new Date().toISOString(),
 };
+
+const CURRENCIES = [
+  { code: 'USD', label: 'US Dollar ($)' },
+  { code: 'EUR', label: 'Euro (€)' },
+  { code: 'GBP', label: 'British Pound (£)' },
+  { code: 'CAD', label: 'Canadian Dollar (C$)' },
+  { code: 'AUD', label: 'Australian Dollar (A$)' },
+  { code: 'JPY', label: 'Japanese Yen (¥)' },
+  { code: 'CHF', label: 'Swiss Franc (CHF)' },
+  { code: 'INR', label: 'Indian Rupee (₹)' },
+];
 
 let state = loadState();
 let currentPlan = null;
@@ -64,6 +76,7 @@ function loadState() {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed.activity)) parsed.activity = [];
       if (typeof parsed.maxTrades !== 'number') parsed.maxTrades = parsed.targets ? parsed.targets.length : 6;
+      if (typeof parsed.currency !== 'string') parsed.currency = 'USD';
       return parsed;
     }
   } catch (e) {
@@ -80,13 +93,19 @@ function saveState() {
 // ---------- Formatting helpers ----------
 
 function fmtMoney(n) {
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  return n.toLocaleString(undefined, {
+    style: 'currency',
+    currency: state.currency || 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
+// Kept as an alias so any older call sites still work identically.
 function fmtMoneyPrecise(n) {
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+  return fmtMoney(n);
 }
-function fmtPct(n, digits = 1) {
-  return (n * 100).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }) + '%';
+function fmtPct(n) {
+  return (n * 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + '%';
 }
 function hashColor(ticker) {
   let h = 0;
@@ -350,7 +369,7 @@ function renderTargets() {
     div.innerHTML = `
       <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
       <input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-ticker" placeholder="Ticker">
-      <input type="number" step="0.01" value="${row.value}" data-idx="${idx}" class="holding-value">
+      <input type="number" step="0.01" value="${(Math.round(row.value * 100) / 100).toFixed(2)}" data-idx="${idx}" class="holding-value">
       <button class="row-delete" data-idx="${idx}" data-table="holding">&times;</button>
     `;
     hContainer.appendChild(div);
@@ -488,6 +507,17 @@ function renderSettings() {
   document.getElementById('lastUpdated').textContent =
     'Last updated ' + d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
     ' at ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+  const select = document.getElementById('currencySelect');
+  if (select.options.length === 0) {
+    CURRENCIES.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.code;
+      opt.textContent = c.label;
+      select.appendChild(opt);
+    });
+  }
+  select.value = state.currency || 'USD';
 }
 
 function renderAll() {
@@ -599,6 +629,12 @@ document.getElementById('savePlanBtn').addEventListener('click', () => {
 });
 
 // ---------- Settings actions ----------
+
+document.getElementById('currencySelect').addEventListener('change', (e) => {
+  state.currency = e.target.value;
+  saveState();
+  renderAll();
+});
 
 document.getElementById('exportBtn').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });

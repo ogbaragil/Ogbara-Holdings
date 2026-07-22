@@ -16,7 +16,10 @@
 
   <header class="topbar">
     <button class="back-btn" id="backBtn" aria-label="Back">&#8249;</button>
-    <div class="topbar-title">Allocate</div>
+    <div class="topbar-title-group">
+      <img src="icons/icon-192.png" alt="Allocate logo" class="topbar-logo">
+      <div class="topbar-title">Allocate</div>
+    </div>
     <div class="topbar-spacer"></div>
   </header>
 
@@ -176,6 +179,11 @@
     <!-- SETTINGS -->
     <section class="view" id="view-settings" hidden>
       <h1 class="view-title">Settings</h1>
+
+      <div class="card">
+        <div class="card-title-row"><h2>Currency</h2></div>
+        <select id="currencySelect"></select>
+      </div>
 
       <div class="card">
         <div class="card-title-row"><h2>Data</h2></div>
