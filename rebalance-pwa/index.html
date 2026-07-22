@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Investment Rebalancing Assistant</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>Investment Rebalancing Assistant</h1>
+  <div class="subtitle" id="lastUpdated"></div>
+</header>
+
+<main>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Target Allocation</h2>
+      <button class="btn-small" id="addTargetRow">+ Add ticker</button>
+    </div>
+    <table id="targetTable">
+      <thead>
+        <tr><th>Ticker</th><th>Target %</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr><td>Total</td><td id="targetTotal">0%</td><td></td></tr>
+      </tfoot>
+    </table>
+    <div class="warning" id="targetWarning"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Current Holdings</h2>
+      <button class="btn-small" id="addHoldingRow">+ Add holding</button>
+    </div>
+    <table id="holdingsTable">
+      <thead>
+        <tr><th>Ticker</th><th>Value ($)</th><th>Weight</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr><td>Total</td><td id="holdingsTotal">$0</td><td></td><td></td></tr>
+      </tfoot>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Rebalancing Plan</h2>
+    </div>
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Current $</th>
+          <th>Current %</th>
+          <th>Target %</th>
+          <th>Target $</th>
+          <th>Buy / (Sell)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+</main>
+
+<footer>
+  <button id="exportBtn">Export JSON</button>
+  <button id="importBtn">Import JSON</button>
+  <button id="resetBtn" class="danger">Reset</button>
+  <input type="file" id="importFile" accept="application/json" hidden>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
