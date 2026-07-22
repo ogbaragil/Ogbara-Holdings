@@ -48,6 +48,8 @@ const DEFAULT_DATA = {
   ],
   cash: 3018,
   maxTrades: 6,
+  minTradeAmount: 0,
+  roundTo: 0,
   currency: 'USD',
   activity: [],
   lastUpdated: new Date().toISOString(),
@@ -68,6 +70,12 @@ let state = loadState();
 let currentPlan = null;
 let activeTab = 'portfolio';
 let planStep = 'recommend'; // 'recommend' | 'projected'
+let inConfirmView = false;
+let confirmContext = null; // { source: 'plan' | 'activity', activityId: string|null, rows: [{ticker, recommended, actual}] }
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
 
 function loadState() {
   try {
@@ -75,7 +83,18 @@ function loadState() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed.activity)) parsed.activity = [];
+      // Migrate older activity entries (pre-Planned/Completed distinction) to the new shape.
+      parsed.activity = parsed.activity.map(a => ({
+        id: a.id || genId(),
+        createdDate: a.createdDate || a.date || new Date().toISOString(),
+        completedDate: a.completedDate !== undefined ? a.completedDate : (a.status === 'planned' ? null : (a.date || new Date().toISOString())),
+        status: a.status || 'completed',
+        buys: a.buys || [],
+        totalInvested: typeof a.totalInvested === 'number' ? a.totalInvested : (a.buys || []).reduce((s, b) => s + b.amount, 0),
+      }));
       if (typeof parsed.maxTrades !== 'number') parsed.maxTrades = parsed.targets ? parsed.targets.length : 6;
+      if (typeof parsed.minTradeAmount !== 'number') parsed.minTradeAmount = 0;
+      if (typeof parsed.roundTo !== 'number') parsed.roundTo = 0;
       if (typeof parsed.currency !== 'string') parsed.currency = 'USD';
       return parsed;
     }
@@ -147,12 +166,23 @@ function accuracyScore(valueByTicker, total) {
 
 // ---------- Plan generation (greedy waterfall) ----------
 
+// Buying any amount of an underweight ticker (without overshooting its target)
+// reduces total tracking error by the same amount per dollar, regardless of
+// which underweight ticker absorbs it. So the accuracy-maximizing move is
+// simply: never leave cash idle while an underweight position could still
+// use it. We rank by size of gap (so the biggest positions get fully funded
+// first, minimizing the number of trades needed), but when cash runs short
+// of fully closing a gap, we invest what's left rather than skipping it -
+// then move on to the next (smaller-gap) candidate with whatever cash
+// remains, subject to the max-trades and minimum-trade-amount settings.
 function generatePlan() {
   const hTotal = holdingsTotal();
   const cash = state.cash || 0;
   const newTotal = hTotal + cash;
   const hMap = holdingsMap();
   const maxTrades = Math.max(1, state.maxTrades || state.targets.length);
+  const minTrade = Math.max(0, state.minTradeAmount || 0);
+  const roundTo = Math.max(0, state.roundTo || 0);
 
   const rows = state.targets.map(t => {
     const ticker = t.ticker.toUpperCase();
@@ -171,12 +201,19 @@ function generatePlan() {
   const skipReason = new Map();
 
   eligible.forEach(r => {
-    if (remaining >= r.gap - 1e-9) {
-      buys.set(r.ticker, r.gap);
-      remaining -= r.gap;
-    } else {
+    if (remaining <= 1e-9) {
       buys.set(r.ticker, 0);
       skipReason.set(r.ticker, 'cash');
+      return;
+    }
+    const desiredRaw = Math.min(remaining, r.gap);
+    const desired = roundTo > 0 ? Math.min(Math.floor(desiredRaw / roundTo) * roundTo, r.gap) : desiredRaw;
+    if (desired > 1e-9 && desired >= minTrade - 1e-9) {
+      buys.set(r.ticker, desired);
+      remaining -= desired;
+    } else {
+      buys.set(r.ticker, 0);
+      skipReason.set(r.ticker, 'mintrade');
     }
   });
   overLimit.forEach(tk => {
@@ -186,20 +223,24 @@ function generatePlan() {
 
   const planRows = rows.map(r => {
     const buy = buys.get(r.ticker) || 0;
+    const partial = buy > 1e-9 && buy < r.gap - 1e-9;
     const projectedValue = r.currentValue + buy;
     const projectedWeight = newTotal > 0 ? projectedValue / newTotal : 0;
     const currentWeight = hTotal > 0 ? r.currentValue / hTotal : 0;
     let reason = null;
     if (r.gap <= 0.005) reason = 'attarget';
+    else if (buy > 1e-9) reason = null; // funded (fully or partially) - no skip reason
     else if (skipReason.get(r.ticker) === 'cash') reason = 'cash';
     else if (skipReason.get(r.ticker) === 'limit') reason = 'limit';
-    return { ...r, buy, projectedValue, projectedWeight, currentWeight, reason };
+    else if (skipReason.get(r.ticker) === 'mintrade') reason = 'mintrade';
+    return { ...r, buy, partial, projectedValue, projectedWeight, currentWeight, reason };
   });
 
   planRows.sort((a, b) => b.gap - a.gap);
 
   const totalBought = planRows.reduce((s, r) => s + r.buy, 0);
   const leftover = Math.max(cash - totalBought, 0);
+  const stillUnderweight = planRows.some(r => r.gap > 0.005 && r.buy <= 1e-9);
 
   const currentAccuracy = accuracyScore(hMap, hTotal);
   const projectedValueMap = new Map(planRows.map(r => [r.ticker.toUpperCase(), r.projectedValue]));
@@ -210,6 +251,7 @@ function generatePlan() {
     cash,
     totalBought,
     leftover,
+    leftoverIsSurplus: leftover > 0.01 && !stillUnderweight,
     newTotal,
     hTotal,
     currentAccuracy,
@@ -221,6 +263,8 @@ function generatePlan() {
 
 function switchTab(tab) {
   activeTab = tab;
+  inConfirmView = false;
+  confirmContext = null;
   if (tab === 'plan') planStep = currentPlan ? planStep : 'recommend';
   document.querySelectorAll('.view').forEach(v => v.hidden = true);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -242,6 +286,10 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 document.getElementById('backBtn').addEventListener('click', () => {
+  if (inConfirmView) {
+    closeConfirmStep();
+    return;
+  }
   if (activeTab === 'plan' && planStep === 'projected') {
     planStep = 'recommend';
     renderAll();
@@ -256,9 +304,15 @@ document.getElementById('backBtn').addEventListener('click', () => {
 
 function renderPortfolio() {
   const hTotal = holdingsTotal();
-  const total = hTotal + (state.cash || 0);
-  document.getElementById('portfolioValue').textContent = fmtMoney(total);
-  document.getElementById('statCash').textContent = fmtMoney(state.cash || 0);
+  const cash = state.cash || 0;
+  const total = hTotal + cash;
+  // The headline number matches the donut chart's basis (invested holdings only).
+  // Cash and the combined total are shown separately so the two never look inconsistent.
+  document.getElementById('portfolioValue').textContent = fmtMoney(hTotal);
+  document.getElementById('portfolioBreakdown').innerHTML = cash > 0
+    ? `+ ${fmtMoney(cash)} available to invest &middot; <strong>${fmtMoney(total)} total</strong>`
+    : `<strong>${fmtMoney(total)} total</strong> &middot; no cash available to invest`;
+  document.getElementById('statCash').textContent = fmtMoney(cash);
   document.getElementById('statHoldings').textContent = state.holdings.length;
 
   const hMap = holdingsMap();
@@ -360,6 +414,8 @@ function renderTargets() {
 
   document.getElementById('cashInput').value = state.cash;
   document.getElementById('maxTradesInput').value = state.maxTrades;
+  document.getElementById('minTradeInput').value = state.minTradeAmount;
+  document.getElementById('roundToInput').value = state.roundTo;
 
   const hContainer = document.getElementById('holdingRows');
   hContainer.innerHTML = '';
@@ -381,7 +437,8 @@ function renderTargets() {
 
 const SKIP_LABELS = {
   attarget: 'No purchase needed — already at or above target',
-  cash: 'Not this round — not enough cash left to fully fund this position',
+  cash: 'Not this round — no cash left to allocate',
+  mintrade: 'Not this round — remaining cash is below your minimum trade amount',
   limit: 'Not this round — max trades limit reached',
 };
 
@@ -397,6 +454,7 @@ function renderRecommend() {
     const pctOfCash = plan.cash > 0 ? r.buy / plan.cash : 0;
     const card = document.createElement('div');
     card.className = 'rec-card' + (skipped ? ' skipped' : '');
+    const amountLabel = skipped ? '—' : fmtMoneyPrecise(r.buy) + (r.partial ? ' (partial)' : '');
     card.innerHTML = `
       <div class="rec-card-top">
         <div class="ticker-badge" style="background:${hashColor(r.ticker)}">${initials(r.ticker)}</div>
@@ -405,7 +463,7 @@ function renderRecommend() {
           <div class="rec-card-fullname">${tickerName(r.ticker)}</div>
         </div>
         <div>
-          <div class="rec-card-amount">${skipped ? '—' : fmtMoneyPrecise(r.buy)}</div>
+          <div class="rec-card-amount">${amountLabel}</div>
           <div class="rec-card-pct">${skipped ? SKIP_LABELS[r.reason] : fmtPct(pctOfCash, 1) + ' of cash'}</div>
         </div>
       </div>
@@ -414,14 +472,19 @@ function renderRecommend() {
     container.appendChild(card);
   });
 
-  const skippedRows = plan.rows.filter(r => r.reason === 'cash' || r.reason === 'limit');
+  const skippedRows = plan.rows.filter(r => r.reason === 'cash' || r.reason === 'limit' || r.reason === 'mintrade');
   const callout = document.getElementById('skipCallout');
   if (skippedRows.length > 0) {
     const plural = skippedRows.length > 1;
     const names = skippedRows.map(r => r.ticker).join(' and ');
-    const reasonText = skippedRows.every(r => r.reason === 'limit')
-      ? `the max trades limit for this round has been reached.`
-      : `there isn’t enough cash left to fully fund ${plural ? 'them' : 'it'} this round.`;
+    let reasonText;
+    if (skippedRows.every(r => r.reason === 'limit')) {
+      reasonText = 'the max trades limit for this round has been reached.';
+    } else if (skippedRows.every(r => r.reason === 'mintrade')) {
+      reasonText = `the cash left over is below your minimum trade amount.`;
+    } else {
+      reasonText = `there isn’t enough cash left to fund ${plural ? 'them' : 'it'} this round.`;
+    }
     callout.hidden = false;
     callout.innerHTML = `<strong>${names} ${plural ? 'are' : 'is'} skipped this round</strong><div>Because ${reasonText}</div>`;
   } else {
@@ -430,10 +493,13 @@ function renderRecommend() {
 
   document.getElementById('totalToInvest').textContent = fmtMoneyPrecise(plan.totalBought);
   const pctUsed = plan.cash > 0 ? plan.totalBought / plan.cash : 0;
-  document.getElementById('totalToInvestPct').textContent =
-    plan.leftover > 0.01
-      ? `${fmtPct(pctUsed, 0)} of cash · ${fmtMoneyPrecise(plan.leftover)} left unallocated`
-      : `${fmtPct(pctUsed, 0)} of cash`;
+  if (plan.leftover > 0.01) {
+    document.getElementById('totalToInvestPct').textContent = plan.leftoverIsSurplus
+      ? `${fmtPct(pctUsed, 0)} of cash · ${fmtMoneyPrecise(plan.leftover)} left over (no positions need it)`
+      : `${fmtPct(pctUsed, 0)} of cash · ${fmtMoneyPrecise(plan.leftover)} left unallocated`;
+  } else {
+    document.getElementById('totalToInvestPct').textContent = `${fmtPct(pctUsed, 0)} of cash`;
+  }
 }
 
 // ---------- Render: Plan step 2 (Projected) ----------
@@ -488,16 +554,121 @@ function renderActivity() {
   }
   empty.hidden = true;
   [...state.activity].reverse().forEach(entry => {
-    const d = new Date(entry.date);
+    const d = new Date(entry.status === 'completed' && entry.completedDate ? entry.completedDate : entry.createdDate);
     const card = document.createElement('div');
     card.className = 'activity-card';
     const buysText = entry.buys.map(b => `${b.ticker} ${fmtMoneyPrecise(b.amount)}`).join(', ');
+    const statusBadge = entry.status === 'planned'
+      ? '<span class="activity-status planned">Planned</span>'
+      : '<span class="activity-status completed">Completed</span>';
+    const verb = entry.status === 'planned' ? 'Recommended' : 'Invested';
     card.innerHTML = `
-      <div class="activity-date">${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</div>
-      <div class="activity-detail">Invested ${fmtMoneyPrecise(entry.totalInvested)} — ${buysText}</div>
+      <div class="activity-date">${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}${statusBadge}</div>
+      <div class="activity-detail">${verb} ${fmtMoneyPrecise(entry.totalInvested)} — ${buysText}</div>
     `;
+    if (entry.status === 'planned') {
+      const btn = document.createElement('button');
+      btn.className = 'link-btn';
+      btn.textContent = 'Mark Completed';
+      btn.addEventListener('click', () => {
+        openConfirmStep(entry.buys.map(b => ({ ticker: b.ticker, amount: b.amount })), 'activity', entry.id);
+      });
+      card.appendChild(btn);
+    }
     list.appendChild(card);
   });
+}
+
+// ---------- Confirm step (used both from a fresh Plan and from a saved-as-planned Activity entry) ----------
+
+function openConfirmStep(rows, source, activityId) {
+  confirmContext = {
+    source,
+    activityId: activityId || null,
+    rows: rows.map(r => ({ ticker: r.ticker, recommended: r.amount, actual: r.amount })),
+  };
+  renderConfirmStep();
+  document.querySelectorAll('.view').forEach(v => v.hidden = true);
+  document.getElementById('view-plan-confirm').hidden = false;
+  inConfirmView = true;
+  document.getElementById('backBtn').classList.add('visible');
+}
+
+function closeConfirmStep() {
+  inConfirmView = false;
+  confirmContext = null;
+  document.getElementById('view-plan-confirm').hidden = true;
+  if (activeTab === 'plan') {
+    document.getElementById('view-plan-projected').hidden = false;
+    document.getElementById('backBtn').classList.add('visible');
+  } else {
+    switchTab('activity');
+  }
+}
+
+function renderConfirmStep() {
+  const container = document.getElementById('confirmRows');
+  container.innerHTML = '';
+  confirmContext.rows.forEach((r, idx) => {
+    const row = document.createElement('div');
+    row.className = 'confirm-row';
+    row.innerHTML = `
+      <div class="ticker-badge" style="background:${hashColor(r.ticker)}">${initials(r.ticker)}</div>
+      <div class="rec-card-name">
+        <div class="rec-card-ticker">${r.ticker}</div>
+        <div class="rec-recommend">Recommended ${fmtMoneyPrecise(r.recommended)}</div>
+      </div>
+      <input type="number" step="0.01" value="${r.actual.toFixed(2)}" data-confirm-idx="${idx}" class="confirm-actual">
+    `;
+    container.appendChild(row);
+  });
+  updateConfirmTotal();
+}
+
+function updateConfirmTotal() {
+  const total = confirmContext.rows.reduce((s, r) => s + (r.actual || 0), 0);
+  document.getElementById('confirmTotal').textContent = fmtMoneyPrecise(total);
+}
+
+function applyConfirmedPurchases() {
+  const nonzero = confirmContext.rows.filter(r => r.actual > 0);
+  if (nonzero.length === 0) {
+    alert('Enter at least one purchase amount before confirming.');
+    return;
+  }
+  nonzero.forEach(r => {
+    const ticker = r.ticker.toUpperCase();
+    const existing = state.holdings.find(h => h.ticker.toUpperCase() === ticker);
+    if (existing) existing.value += r.actual;
+    else state.holdings.push({ ticker: r.ticker, value: r.actual });
+  });
+  const totalInvested = nonzero.reduce((s, r) => s + r.actual, 0);
+  state.cash = Math.max(0, (state.cash || 0) - totalInvested);
+
+  if (confirmContext.source === 'activity' && confirmContext.activityId) {
+    const entry = state.activity.find(a => a.id === confirmContext.activityId);
+    if (entry) {
+      entry.status = 'completed';
+      entry.completedDate = new Date().toISOString();
+      entry.buys = nonzero.map(r => ({ ticker: r.ticker, amount: r.actual }));
+      entry.totalInvested = totalInvested;
+    }
+  } else {
+    state.activity.push({
+      id: genId(),
+      createdDate: new Date().toISOString(),
+      completedDate: new Date().toISOString(),
+      status: 'completed',
+      buys: nonzero.map(r => ({ ticker: r.ticker, amount: r.actual })),
+      totalInvested,
+    });
+  }
+
+  saveState();
+  currentPlan = null;
+  inConfirmView = false;
+  confirmContext = null;
+  switchTab('portfolio');
 }
 
 // ---------- Render: Settings ----------
@@ -534,6 +705,13 @@ function renderAll() {
 document.addEventListener('input', (e) => {
   const idx = e.target.dataset.idx;
 
+  if (e.target.classList.contains('confirm-actual')) {
+    const cIdx = parseInt(e.target.dataset.confirmIdx, 10);
+    confirmContext.rows[cIdx].actual = parseFloat(e.target.value) || 0;
+    updateConfirmTotal();
+    return;
+  }
+
   if (e.target.id === 'cashInput') {
     state.cash = parseFloat(e.target.value) || 0;
     saveState();
@@ -541,6 +719,16 @@ document.addEventListener('input', (e) => {
   }
   if (e.target.id === 'maxTradesInput') {
     state.maxTrades = Math.max(1, parseInt(e.target.value, 10) || state.targets.length);
+    saveState();
+    return;
+  }
+  if (e.target.id === 'minTradeInput') {
+    state.minTradeAmount = Math.max(0, parseFloat(e.target.value) || 0);
+    saveState();
+    return;
+  }
+  if (e.target.id === 'roundToInput') {
+    state.roundTo = Math.max(0, parseFloat(e.target.value) || 0);
     saveState();
     return;
   }
@@ -602,30 +790,47 @@ document.getElementById('reviewAllocationBtn').addEventListener('click', () => {
   renderProjected();
 });
 
-document.getElementById('savePlanBtn').addEventListener('click', () => {
+document.getElementById('markCompletedBtn').addEventListener('click', () => {
   const plan = currentPlan || generatePlan();
-  if (plan.totalBought <= 0) {
+  const nonzero = plan.rows.filter(r => r.buy > 0);
+  if (nonzero.length === 0) {
+    alert('No purchases in this plan yet — nothing to confirm.');
+    return;
+  }
+  openConfirmStep(nonzero.map(r => ({ ticker: r.ticker, amount: r.buy })), 'plan', null);
+});
+
+document.getElementById('savePlannedBtn').addEventListener('click', () => {
+  const plan = currentPlan || generatePlan();
+  const nonzero = plan.rows.filter(r => r.buy > 0);
+  if (nonzero.length === 0) {
     alert('No purchases in this plan yet — nothing to save.');
     return;
   }
-  const hMap = holdingsMap();
-  plan.rows.forEach(r => {
-    if (r.buy > 0) {
-      const ticker = r.ticker.toUpperCase();
-      const existing = state.holdings.find(h => h.ticker.toUpperCase() === ticker);
-      if (existing) existing.value += r.buy;
-      else state.holdings.push({ ticker: r.ticker, value: r.buy });
-    }
-  });
-  state.cash = plan.leftover;
   state.activity.push({
-    date: new Date().toISOString(),
+    id: genId(),
+    createdDate: new Date().toISOString(),
+    completedDate: null,
+    status: 'planned',
+    buys: nonzero.map(r => ({ ticker: r.ticker, amount: r.buy })),
     totalInvested: plan.totalBought,
-    buys: plan.rows.filter(r => r.buy > 0).map(r => ({ ticker: r.ticker, amount: r.buy })),
   });
   saveState();
   currentPlan = null;
+  switchTab('activity');
+});
+
+document.getElementById('discardPlanBtn').addEventListener('click', () => {
+  currentPlan = null;
   switchTab('portfolio');
+});
+
+document.getElementById('confirmCompleteBtn').addEventListener('click', () => {
+  applyConfirmedPurchases();
+});
+
+document.getElementById('cancelConfirmBtn').addEventListener('click', () => {
+  closeConfirmStep();
 });
 
 // ---------- Settings actions ----------
@@ -661,6 +866,9 @@ document.getElementById('importFile').addEventListener('change', (e) => {
       if (typeof imported.cash !== 'number') imported.cash = 0;
       if (!Array.isArray(imported.activity)) imported.activity = [];
       if (typeof imported.maxTrades !== 'number') imported.maxTrades = imported.targets.length;
+      if (typeof imported.minTradeAmount !== 'number') imported.minTradeAmount = 0;
+      if (typeof imported.roundTo !== 'number') imported.roundTo = 0;
+      if (typeof imported.currency !== 'string') imported.currency = 'USD';
       state = imported;
       currentPlan = null;
       saveState();

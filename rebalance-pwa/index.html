@@ -28,8 +28,9 @@
     <!-- PORTFOLIO -->
     <section class="view" id="view-portfolio">
       <div class="value-block">
-        <div class="value-label">Total Portfolio Value</div>
+        <div class="value-label">Invested Portfolio</div>
         <div class="value-amount" id="portfolioValue">$0</div>
+        <div class="value-breakdown" id="portfolioBreakdown"></div>
       </div>
 
       <div class="card">
@@ -98,12 +99,26 @@
           </div>
           <div class="toggle-pill on">On</div>
         </div>
-        <div class="field-row">
+        <div class="field-row spaced">
           <div class="field-body">
             <label for="maxTradesInput">Max trades</label>
             <div class="toggle-sub">Limit how many positions get a buy this round</div>
           </div>
           <input type="number" min="1" step="1" id="maxTradesInput" class="small-input">
+        </div>
+        <div class="field-row spaced">
+          <div class="field-body">
+            <label for="minTradeInput">Minimum trade amount</label>
+            <div class="toggle-sub">Skip a position rather than buy less than this</div>
+          </div>
+          <input type="number" min="0" step="1" id="minTradeInput" class="small-input">
+        </div>
+        <div class="field-row spaced">
+          <div class="field-body">
+            <label for="roundToInput">Round trades to nearest</label>
+            <div class="toggle-sub">0 = exact amounts, no rounding</div>
+          </div>
+          <input type="number" min="0" step="1" id="roundToInput" class="small-input">
         </div>
       </div>
 
@@ -165,13 +180,33 @@
         <div>Your portfolio is better aligned with your targets.</div>
       </div>
 
-      <button class="primary-btn" id="savePlanBtn">Save Plan</button>
+      <div class="button-stack">
+        <button class="primary-btn" id="markCompletedBtn">Mark as Completed</button>
+        <button class="secondary-btn" id="savePlannedBtn">Save as Planned</button>
+        <button class="text-btn" id="discardPlanBtn">Discard</button>
+      </div>
+      <p class="hint-text">Mark as Completed only after you've actually made the purchases — it updates your holdings. Save as Planned just keeps the recommendation for later.</p>
+    </section>
+
+    <!-- PLAN: confirm actual purchases -->
+    <section class="view" id="view-plan-confirm" hidden>
+      <h1 class="view-title">Confirm Purchases</h1>
+      <p class="view-subtitle">Adjust amounts if what you actually bought differs from the recommendation.</p>
+
+      <div id="confirmRows"></div>
+
+      <div class="totals-line">Total invested <span id="confirmTotal">$0</span></div>
+
+      <div class="button-stack">
+        <button class="primary-btn" id="confirmCompleteBtn">Confirm &amp; Update Portfolio</button>
+        <button class="text-btn" id="cancelConfirmBtn">Cancel</button>
+      </div>
     </section>
 
     <!-- ACTIVITY -->
     <section class="view" id="view-activity" hidden>
       <h1 class="view-title">Activity</h1>
-      <p class="view-subtitle">Plans you've saved</p>
+      <p class="view-subtitle">Planned and completed contributions</p>
       <div id="activityList"></div>
       <div class="empty-state" id="activityEmpty">No saved plans yet.</div>
     </section>

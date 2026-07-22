@@ -8,28 +8,43 @@ stored locally in your browser (localStorage) — nothing is sent to a server. U
 Export/Import buttons (under Settings) to back up or move data between devices.
 
 **Screens:**
-- **Portfolio** — total value, current allocation donut chart, available cash / target
-  accuracy / holdings count, and a holdings table with current vs. target weight.
-- **Targets** — edit your target allocation, current holdings, cash to invest, and a
-  max-trades limit (caps how many positions get a buy recommendation in one round).
-  Tap **Generate Plan** to move to the Plan tab.
+- **Portfolio** — invested-holdings total (matches the donut chart below it exactly),
+  a breakdown line showing available cash and the combined total separately, current
+  allocation donut chart, available cash / target accuracy / holdings count, and a
+  holdings table with current vs. target weight.
+- **Targets** — edit your target allocation, current holdings, cash to invest, max
+  trades, minimum trade amount, and a rounding increment. Tap **Generate Plan** to
+  move to the Plan tab.
 - **Plan** — step 1 shows recommended buys per ticker with a progress bar (% of cash
   used) and explains any skipped positions; step 2 shows a before/after allocation
-  comparison and a target-accuracy score. **Save Plan** applies the buys to your
-  holdings, reduces cash to whatever's left over, and logs the event under Activity.
-- **Activity** — history of saved plans.
-- **Settings** — Export/Import/Reset and app info.
+  comparison and a target-accuracy score, then three actions:
+  - **Mark as Completed** — opens a confirmation screen where you can adjust the
+    actual amount per ticker (in case what you bought differs from the recommendation)
+    before it updates your holdings, reduces cash, and logs a **Completed** entry.
+  - **Save as Planned** — logs the recommendation under Activity as **Planned**
+    without touching your holdings or cash. Useful when you want to decide later.
+  - **Discard** — throws the plan away, nothing is recorded.
+- **Activity** — history of saved plans, tagged Planned or Completed. Planned entries
+  have their own **Mark Completed** button so you can execute them later, at which
+  point they update in place (edited amounts and all) rather than duplicating.
+- **Settings** — currency, Export/Import/Reset, and app info.
 
-**Allocation logic (greedy waterfall):** positions are ranked by how far below target
-they are, in dollar terms. Cash is used to fully close the gap for the most underweight
-position first, then the next, and so on. If there isn't enough cash left to *fully*
-close a position's gap, or the max-trades limit is reached, that position is skipped
-this round (not partially funded) and whatever's left over cash is reported as
-unallocated. Overweight positions never receive money and are never sold.
+**Allocation logic:** buying any amount of an underweight position (without
+overshooting its target) reduces total tracking error by the same amount per dollar,
+regardless of which underweight ticker absorbs it. So the accuracy-maximizing move is
+simple: never leave cash idle while an underweight position could still use it.
+Positions are ranked by gap size (biggest first, so the fewest trades are needed to
+make progress); cash fully funds each in turn, and when it runs short of closing the
+next gap, it invests whatever's left rather than skipping it, then moves to the next
+(smaller-gap) candidate with whatever cash remains. Three settings shape this:
+**max trades** caps how many positions can receive a buy in one round; **minimum
+trade amount** skips a position rather than recommend a trade smaller than that;
+**rounding** rounds each buy down to the nearest increment you choose (e.g. nearest
+$10). Overweight positions never receive money and are never sold.
 
-**Left out of this version:** a "fractional shares" toggle (would need live share
-prices, which this app doesn't fetch) and a portfolio value change badge (would need
-a historical baseline). Both are easy to add later if useful.
+**Left out of this version:** a "fractional shares" / whole-share-only mode (would
+need live share prices, which this app doesn't fetch) and a portfolio value change
+badge (would need a historical baseline). Both are easy to add later if useful.
 
 ## Run it locally
 
