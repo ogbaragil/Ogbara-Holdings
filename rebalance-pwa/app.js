@@ -1,13 +1,13 @@
 // Investment Rebalancing Assistant ("Allocate")
 // All data lives in localStorage. Nothing is sent anywhere.
 //
-// Workflow: set a target allocation, enter current holdings, enter cash
-// available to invest, generate a buy-only recommendation (greedy
-// waterfall: fully fund the most underweight ticker first, then the next,
-// etc; a ticker is skipped - not partially funded - if there isn't enough
-// cash left to fully close its gap, or if a max-trades limit is reached).
-// Existing holdings are never sold. Saving a plan applies the buys to your
-// holdings and logs the event under Activity.
+// Workflow: Portfolio shows where you are now (holdings). Strategy sets
+// where you want to be (target allocation). Contribute is where you enter
+// today's cash and constraints and generate a buy-only recommendation
+// (greedy waterfall with partial funding - see generatePlan below).
+// Existing holdings are never sold. A generated plan can be saved as
+// Planned (recorded, portfolio untouched) or Completed (applied to
+// holdings/cash) - see the Activity tab.
 
 const STORAGE_KEY = 'rebalance-assistant-data-v3';
 
@@ -51,6 +51,7 @@ const DEFAULT_DATA = {
   minTradeAmount: 0,
   roundTo: 0,
   currency: 'USD',
+  allowIntentionalNewPositions: true,
   activity: [],
   lastUpdated: new Date().toISOString(),
 };
@@ -70,8 +71,20 @@ let state = loadState();
 let currentPlan = null;
 let activeTab = 'portfolio';
 let planStep = 'recommend'; // 'recommend' | 'projected'
+
+// Pushed-screen flags (layered on top of whatever tab is active). Exactly
+// one of these should be true at a time; switchTab() resets all of them.
+let inHoldingsEdit = false;
+let inPreflight = false;
+let inPlanRecommend = false;
+let inPlanProjected = false;
 let inConfirmView = false;
 let confirmContext = null; // { source: 'plan' | 'activity', activityId: string|null, rows: [{ticker, recommended, actual}] }
+
+// Draft copies used by the staged edit-then-save screens (Holdings, Strategy).
+let holdingsDraft = null;
+let targetsDraft = null;
+let allowNewDraft = true;
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -96,6 +109,7 @@ function loadState() {
       if (typeof parsed.minTradeAmount !== 'number') parsed.minTradeAmount = 0;
       if (typeof parsed.roundTo !== 'number') parsed.roundTo = 0;
       if (typeof parsed.currency !== 'string') parsed.currency = 'USD';
+      if (typeof parsed.allowIntentionalNewPositions !== 'boolean') parsed.allowIntentionalNewPositions = true;
       return parsed;
     }
   } catch (e) {
@@ -162,6 +176,98 @@ function accuracyScore(valueByTicker, total) {
     sum += Math.abs(cur - tgt);
   });
   return Math.max(0, 1 - sum / 2);
+}
+
+// ---------- Validation ----------
+// Duplicate tickers are dangerous here specifically because holdingsMap()/
+// targetsMap() collapse arrays into Maps keyed by ticker - a duplicate
+// silently overwrites the earlier entry. Rather than try to make every
+// downstream calculation duplicate-safe, we simply never let a duplicate
+// (or blank ticker, or negative value) reach the committed `state` in the
+// first place: Holdings and Strategy are edited as drafts and can only be
+// saved once they're clean.
+
+function normTicker(ticker) {
+  return (ticker || '').trim().toUpperCase();
+}
+
+function listHasDuplicates(list) {
+  const seen = new Set();
+  for (const row of list) {
+    const t = normTicker(row.ticker);
+    if (!t) continue;
+    if (seen.has(t)) return true;
+    seen.add(t);
+  }
+  return false;
+}
+function listHasBlank(list) {
+  return list.some(row => !normTicker(row.ticker));
+}
+function listHasNegative(list, key) {
+  return list.some(row => typeof row[key] === 'number' && row[key] < 0);
+}
+
+// Per-row error messages for the staged edit screens (Holdings/Strategy).
+function computeRowErrors(list, valueKey) {
+  const seen = new Map();
+  return list.map((row, idx) => {
+    const errors = [];
+    const raw = (row.ticker || '').trim();
+    const norm = raw.toUpperCase();
+    if (!raw) {
+      errors.push('Ticker required');
+    } else if (seen.has(norm)) {
+      errors.push('Duplicate ticker');
+    } else {
+      seen.set(norm, idx);
+    }
+    if (typeof row[valueKey] === 'number' && row[valueKey] < 0) {
+      errors.push('Value cannot be negative');
+    }
+    return errors;
+  });
+}
+
+function crossValidate(holdings, targets) {
+  const hTickers = new Set(holdings.map(h => normTicker(h.ticker)).filter(Boolean));
+  const tTickers = new Set(targets.map(t => normTicker(t.ticker)).filter(Boolean));
+  return {
+    holdingsWithoutTarget: [...hTickers].filter(t => !tTickers.has(t)),
+    targetsWithoutHolding: [...tTickers].filter(t => !hTickers.has(t)),
+  };
+}
+
+// Six granular pass/fail checks (mirrors the Pre-flight checklist) plus the
+// two non-blocking cross-validation notes, all evaluated against the
+// currently *committed* state (not drafts - drafts are validated locally
+// within their own edit screens).
+function computeValidation() {
+  const targetsSum = state.targets.reduce((s, t) => s + (t.weight || 0), 0);
+  const sumOk = Math.abs(targetsSum - 1) <= 0.001;
+  const dupTargets = listHasDuplicates(state.targets);
+  const dupHoldings = listHasDuplicates(state.holdings);
+  const anyBlank = listHasBlank(state.targets) || listHasBlank(state.holdings);
+  const anyNegative = listHasNegative(state.targets, 'weight') || listHasNegative(state.holdings, 'value');
+  const cashOk = (state.cash || 0) > 0;
+  const cross = crossValidate(state.holdings, state.targets);
+  const needsAck = cross.targetsWithoutHolding.length > 0 && !state.allowIntentionalNewPositions;
+
+  const checks = [
+    { key: 'targetsSum', label: 'Targets equal 100%', pass: sumOk, detail: sumOk ? null : `Currently ${fmtPct(targetsSum)}` },
+    { key: 'dupTargets', label: 'No duplicate target tickers', pass: !dupTargets },
+    { key: 'dupHoldings', label: 'No duplicate holding tickers', pass: !dupHoldings },
+    { key: 'blankTickers', label: 'No blank ticker symbols', pass: !anyBlank },
+    { key: 'negativeValues', label: 'No negative values', pass: !anyNegative },
+    { key: 'cashPositive', label: 'Cash greater than zero', pass: cashOk },
+  ];
+  if (needsAck) {
+    checks.push({ key: 'newPositionsAck', label: 'New target positions acknowledged', pass: false, detail: 'Check "Allow intentional new positions" in Strategy' });
+  }
+
+  const blocking = checks.filter(c => !c.pass).map(c => c.label);
+
+  return { checks, blocking, cross, targetsSum, sumOk, cashOk };
 }
 
 // ---------- Plan generation (greedy waterfall) ----------
@@ -261,22 +367,28 @@ function generatePlan() {
 
 // ---------- Navigation ----------
 
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.hidden = true);
+  document.getElementById('view-' + id).hidden = false;
+}
+
 function switchTab(tab) {
   activeTab = tab;
+  inHoldingsEdit = false;
+  inPreflight = false;
+  inPlanRecommend = false;
+  inPlanProjected = false;
   inConfirmView = false;
   confirmContext = null;
-  if (tab === 'plan') planStep = currentPlan ? planStep : 'recommend';
-  document.querySelectorAll('.view').forEach(v => v.hidden = true);
+
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
 
-  if (tab === 'plan') {
-    if (!currentPlan) currentPlan = generatePlan();
-    if (planStep === 'recommend') document.getElementById('view-plan-recommend').hidden = false;
-    else document.getElementById('view-plan-projected').hidden = false;
-  } else {
-    document.getElementById('view-' + tab).hidden = false;
+  if (tab === 'strategy') {
+    targetsDraft = state.targets.map(t => ({ ...t }));
+    allowNewDraft = state.allowIntentionalNewPositions;
   }
 
+  showView(tab);
   document.getElementById('backBtn').classList.toggle('visible', tab !== 'portfolio');
   renderAll();
 }
@@ -286,17 +398,21 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 document.getElementById('backBtn').addEventListener('click', () => {
-  if (inConfirmView) {
-    closeConfirmStep();
+  if (inConfirmView) { closeConfirmStep(); return; }
+  if (inPlanProjected) {
+    inPlanProjected = false;
+    inPlanRecommend = true;
+    showView('plan-recommend');
+    renderRecommend();
     return;
   }
-  if (activeTab === 'plan' && planStep === 'projected') {
-    planStep = 'recommend';
-    renderAll();
-    document.getElementById('view-plan-projected').hidden = true;
-    document.getElementById('view-plan-recommend').hidden = false;
+  if (inPlanRecommend) {
+    inPlanRecommend = false;
+    openPreflight();
     return;
   }
+  if (inPreflight) { closePreflightBack(); return; }
+  if (inHoldingsEdit) { closeHoldingsEdit(); return; }
   switchTab('portfolio');
 });
 
@@ -317,9 +433,19 @@ function renderPortfolio() {
 
   const hMap = holdingsMap();
   const accuracy = accuracyScore(hMap, hTotal);
-  document.getElementById('statAccuracy').textContent = fmtPct(accuracy, 0);
+  document.getElementById('statAccuracy').textContent = fmtPct(accuracy);
 
   renderDonut(hTotal);
+
+  const validation = computeValidation();
+  const banner = document.getElementById('portfolioIssuesBanner');
+  if (validation.blocking.length > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">&#9888; ${validation.blocking.length} issue${validation.blocking.length > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve these so calculations stay accurate.</div><ul>${validation.blocking.map(b => `<li>${b}</li>`).join('')}</ul>`;
+  } else {
+    banner.hidden = true;
+  }
 
   const tMap = targetsMap();
   const tbody = document.getElementById('portfolioHoldingsBody');
@@ -388,49 +514,243 @@ function renderDonut(hTotal) {
   svg.appendChild(label);
 }
 
-// ---------- Render: Targets ----------
+// ---------- Holdings edit (pushed screen from Portfolio) ----------
 
-function renderTargets() {
-  const container = document.getElementById('targetRows');
+function openHoldingsEdit() {
+  holdingsDraft = state.holdings.map(h => ({ ...h }));
+  inHoldingsEdit = true;
+  showView('holdings-edit');
+  document.getElementById('backBtn').classList.add('visible');
+  renderHoldingsEditView();
+}
+
+function closeHoldingsEdit() {
+  inHoldingsEdit = false;
+  holdingsDraft = null;
+  switchTab('portfolio');
+}
+
+function saveHoldingsEdit() {
+  const errors = computeRowErrors(holdingsDraft, 'value');
+  if (errors.some(e => e.length > 0)) return;
+  state.holdings = holdingsDraft.map(h => ({ ticker: normTicker(h.ticker), value: h.value }));
+  saveState();
+  closeHoldingsEdit();
+}
+
+function renderHoldingsEditView() {
+  const errors = computeRowErrors(holdingsDraft, 'value');
+  const totalIssues = errors.reduce((s, e) => s + e.length, 0);
+
+  const banner = document.getElementById('holdingsBanner');
+  if (totalIssues > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">&#9888; ${totalIssues} issue${totalIssues > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve all issues to save your holdings.</div>`;
+  } else {
+    banner.hidden = true;
+  }
+
+  const container = document.getElementById('holdingEditRows');
   container.innerHTML = '';
-  state.targets.forEach((row, idx) => {
+  holdingsDraft.forEach((row, idx) => {
     const div = document.createElement('div');
-    div.className = 'row-edit';
+    div.className = 'row-edit-wrap';
+    const rowErrors = errors[idx];
     div.innerHTML = `
-      <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
-      <input type="text" value="${row.ticker}" data-idx="${idx}" class="target-ticker" placeholder="Ticker">
-      <input type="number" step="0.01" value="${(row.weight * 100).toFixed(2)}" data-idx="${idx}" class="target-weight">
-      <button class="row-delete" data-idx="${idx}" data-table="target">&times;</button>
+      <div class="row-edit">
+        <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
+        <input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-draft-ticker" placeholder="Ticker">
+        <input type="number" step="0.01" value="${row.value}" data-idx="${idx}" class="holding-draft-value">
+        <button class="row-delete" data-idx="${idx}" data-table="holding-draft">&times;</button>
+      </div>
+      ${rowErrors.length ? `<div class="row-error">${rowErrors.join(' · ')}</div>` : ''}
+    `;
+    container.appendChild(div);
+  });
+  document.getElementById('holdingsEditTotal').textContent = fmtMoney(holdingsDraft.reduce((s, r) => s + (r.value || 0), 0));
+
+  const saveBtn = document.getElementById('saveHoldingsBtn');
+  saveBtn.disabled = totalIssues > 0;
+  document.getElementById('saveHoldingsHint').hidden = totalIssues === 0;
+}
+
+// ---------- Strategy (tab, staged draft) ----------
+
+function renderStrategyView() {
+  const rowErrors = computeRowErrors(targetsDraft, 'weight');
+  const totalIssues = rowErrors.reduce((s, e) => s + e.length, 0);
+  const sum = targetsDraft.reduce((s, t) => s + (t.weight || 0), 0);
+  const sumOk = Math.abs(sum - 1) <= 0.001;
+
+  const banner = document.getElementById('strategyBanner');
+  if (totalIssues > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">&#9888; ${totalIssues} issue${totalIssues > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve all issues to save your strategy.</div>`;
+  } else if (!sumOk) {
+    const remaining = (1 - sum) * 100;
+    banner.hidden = false;
+    banner.className = 'banner caution';
+    banner.innerHTML = `<div class="banner-title">&#9888; Total = ${fmtPct(sum)}</div><div class="banner-sub">Targets must equal 100%. ${remaining >= 0 ? fmtPct(remaining / 100) + ' remaining' : fmtPct(-remaining / 100) + ' over'}</div>`;
+  } else {
+    banner.hidden = true;
+  }
+
+  const cross = crossValidate(state.holdings, targetsDraft);
+  const noHoldingSet = new Set(cross.targetsWithoutHolding);
+
+  const container = document.getElementById('targetEditRows');
+  container.innerHTML = '';
+  targetsDraft.forEach((row, idx) => {
+    const div = document.createElement('div');
+    div.className = 'row-edit-wrap';
+    const errs = [...rowErrors[idx]];
+    const norm = normTicker(row.ticker);
+    const noHolding = norm && noHoldingSet.has(norm) && !errs.length;
+    div.innerHTML = `
+      <div class="row-edit">
+        <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
+        <input type="text" value="${row.ticker}" data-idx="${idx}" class="target-draft-ticker" placeholder="Ticker">
+        <input type="number" step="0.01" value="${(row.weight * 100).toFixed(2)}" data-idx="${idx}" class="target-draft-weight">
+        <button class="row-delete" data-idx="${idx}" data-table="target-draft">&times;</button>
+      </div>
+      ${errs.length ? `<div class="row-error">${errs.join(' · ')}</div>` : ''}
+      ${noHolding ? `<div class="row-error info">No current holding (allowed if intentional)</div>` : ''}
     `;
     container.appendChild(div);
   });
 
-  const total = state.targets.reduce((s, r) => s + r.weight, 0);
-  document.getElementById('targetTotal').textContent = fmtPct(total);
-  const warning = document.getElementById('targetWarning');
-  warning.textContent = Math.abs(total - 1) > 0.001
-    ? `Target weights sum to ${fmtPct(total)}, not 100%.`
-    : '';
+  document.getElementById('targetTotal').textContent = fmtPct(sum);
+  document.getElementById('allowNewPositions').checked = allowNewDraft;
 
+  const saveBtn = document.getElementById('saveStrategyBtn');
+  const canSave = totalIssues === 0 && sumOk;
+  saveBtn.disabled = !canSave;
+  document.getElementById('saveStrategyHint').hidden = canSave;
+}
+
+function saveStrategy() {
+  const rowErrors = computeRowErrors(targetsDraft, 'weight');
+  const sum = targetsDraft.reduce((s, t) => s + (t.weight || 0), 0);
+  if (rowErrors.some(e => e.length > 0) || Math.abs(sum - 1) > 0.001) return;
+  state.targets = targetsDraft.map(t => ({ ticker: normTicker(t.ticker), weight: t.weight }));
+  state.allowIntentionalNewPositions = allowNewDraft;
+  saveState();
+  switchTab('portfolio');
+}
+
+// ---------- Contribute (tab) ----------
+
+function renderContribute() {
   document.getElementById('cashInput').value = state.cash;
   document.getElementById('maxTradesInput').value = state.maxTrades;
   document.getElementById('minTradeInput').value = state.minTradeAmount;
   document.getElementById('roundToInput').value = state.roundTo;
 
-  const hContainer = document.getElementById('holdingRows');
-  hContainer.innerHTML = '';
-  state.holdings.forEach((row, idx) => {
+  const cashOk = (state.cash || 0) > 0;
+  document.getElementById('cashError').textContent = cashOk ? '' : 'Enter an amount greater than 0.';
+
+  const validation = computeValidation();
+  const banner = document.getElementById('contributeBanner');
+  const generateBtn = document.getElementById('generatePlanBtn');
+  if (validation.blocking.length > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">Issues to resolve before generating</div><ul>${validation.blocking.map(b => `<li>&#10005; ${b}</li>`).join('')}</ul>`;
+    generateBtn.disabled = true;
+    document.getElementById('generatePlanHint').hidden = false;
+  } else {
+    banner.hidden = true;
+    generateBtn.disabled = false;
+    document.getElementById('generatePlanHint').hidden = true;
+  }
+}
+
+// ---------- Pre-flight check (pushed screen from Contribute) ----------
+
+function openPreflight() {
+  inPreflight = true;
+  showView('preflight');
+  document.getElementById('backBtn').classList.add('visible');
+  renderPreflightView();
+}
+
+function closePreflightBack() {
+  inPreflight = false;
+  switchTab('contribute');
+}
+
+const WARNING_COPY = {
+  holdingsWithoutTarget: {
+    icon: 'info',
+    label: 'Holding without corresponding target',
+    detail: tickers => `${tickers.join(', ')} ${tickers.length > 1 ? "aren't" : "isn't"} part of your strategy, so ${tickers.length > 1 ? 'they' : 'it'} won't factor into target-based buys.`,
+  },
+  targetsWithoutHolding: {
+    icon: 'neutral',
+    label: 'Target without current holding',
+    detail: tickers => `${tickers.join(', ')} will be purchased as new position${tickers.length > 1 ? 's' : ''} (allowed).`,
+  },
+};
+
+function renderPreflightView() {
+  const validation = computeValidation();
+  const summary = document.getElementById('preflightSummary');
+  if (validation.blocking.length === 0) {
+    summary.className = 'banner good';
+    summary.innerHTML = `<div class="banner-title">&#10003; Ready to generate</div><div class="banner-sub">Your setup looks good. Any notices are shown below.</div>`;
+  } else {
+    summary.className = 'banner error';
+    summary.innerHTML = `<div class="banner-title">&#10005; ${validation.blocking.length} issue${validation.blocking.length > 1 ? 's' : ''} to fix</div><div class="banner-sub">Go back and resolve these first.</div>`;
+  }
+
+  const checksEl = document.getElementById('preflightChecks');
+  checksEl.innerHTML = '';
+  validation.checks.forEach(c => {
     const div = document.createElement('div');
-    div.className = 'row-edit';
+    div.className = 'check-item';
     div.innerHTML = `
-      <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
-      <input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-ticker" placeholder="Ticker">
-      <input type="number" step="0.01" value="${(Math.round(row.value * 100) / 100).toFixed(2)}" data-idx="${idx}" class="holding-value">
-      <button class="row-delete" data-idx="${idx}" data-table="holding">&times;</button>
+      <div class="check-icon ${c.pass ? 'pass' : 'fail'}">${c.pass ? '&#10003;' : '&#10005;'}</div>
+      <div>
+        <div class="check-label">${c.label}</div>
+        ${c.detail ? `<div class="check-detail">${c.detail}</div>` : ''}
+      </div>
     `;
-    hContainer.appendChild(div);
+    checksEl.appendChild(div);
   });
-  document.getElementById('holdingsTotal').textContent = fmtMoney(holdingsTotal());
+
+  const warningsEl = document.getElementById('preflightWarnings');
+  warningsEl.innerHTML = '';
+  ['holdingsWithoutTarget', 'targetsWithoutHolding'].forEach(key => {
+    const tickers = validation.cross[key];
+    if (!tickers || tickers.length === 0) return;
+    const copy = WARNING_COPY[key];
+    const div = document.createElement('div');
+    div.className = 'check-item card';
+    div.innerHTML = `
+      <div class="check-icon ${copy.icon}">!</div>
+      <div>
+        <div class="check-label">${copy.label}</div>
+        <div class="check-detail">${copy.detail(tickers)}</div>
+      </div>
+    `;
+    warningsEl.appendChild(div);
+  });
+
+  document.getElementById('preflightGenerateBtn').disabled = validation.blocking.length > 0;
+}
+
+function proceedFromPreflight() {
+  const validation = computeValidation();
+  if (validation.blocking.length > 0) return;
+  inPreflight = false;
+  inPlanRecommend = true;
+  currentPlan = generatePlan();
+  planStep = 'recommend';
+  showView('plan-recommend');
+  document.getElementById('backBtn').classList.add('visible');
+  renderRecommend();
 }
 
 // ---------- Render: Plan step 1 (Recommend) ----------
@@ -464,7 +784,7 @@ function renderRecommend() {
         </div>
         <div>
           <div class="rec-card-amount">${amountLabel}</div>
-          <div class="rec-card-pct">${skipped ? SKIP_LABELS[r.reason] : fmtPct(pctOfCash, 1) + ' of cash'}</div>
+          <div class="rec-card-pct">${skipped ? SKIP_LABELS[r.reason] : fmtPct(pctOfCash) + ' of cash'}</div>
         </div>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${(pctOfCash * 100).toFixed(1)}%"></div></div>
@@ -495,10 +815,10 @@ function renderRecommend() {
   const pctUsed = plan.cash > 0 ? plan.totalBought / plan.cash : 0;
   if (plan.leftover > 0.01) {
     document.getElementById('totalToInvestPct').textContent = plan.leftoverIsSurplus
-      ? `${fmtPct(pctUsed, 0)} of cash · ${fmtMoneyPrecise(plan.leftover)} left over (no positions need it)`
-      : `${fmtPct(pctUsed, 0)} of cash · ${fmtMoneyPrecise(plan.leftover)} left unallocated`;
+      ? `${fmtPct(pctUsed)} of cash · ${fmtMoneyPrecise(plan.leftover)} left over (no positions need it)`
+      : `${fmtPct(pctUsed)} of cash · ${fmtMoneyPrecise(plan.leftover)} left unallocated`;
   } else {
-    document.getElementById('totalToInvestPct').textContent = `${fmtPct(pctUsed, 0)} of cash`;
+    document.getElementById('totalToInvestPct').textContent = `${fmtPct(pctUsed)} of cash`;
   }
 }
 
@@ -515,7 +835,7 @@ function renderProjected() {
   callout.className = 'info-callout' + (improved ? ' good' : '');
   callout.innerHTML = `
     <strong>${improved ? 'Closer to target' : 'Allocation change'}</strong>
-    <div>Target accuracy ${improved ? 'improves' : 'moves'} from ${fmtPct(beforePct, 0)} to ${fmtPct(afterPct, 0)}</div>
+    <div>Target accuracy ${improved ? 'improves' : 'moves'} from ${fmtPct(beforePct)} to ${fmtPct(afterPct)}</div>
   `;
 
   const tbody = document.getElementById('compareBody');
@@ -582,24 +902,26 @@ function renderActivity() {
 // ---------- Confirm step (used both from a fresh Plan and from a saved-as-planned Activity entry) ----------
 
 function openConfirmStep(rows, source, activityId) {
+  inPlanRecommend = false;
+  inPlanProjected = false;
   confirmContext = {
     source,
     activityId: activityId || null,
     rows: rows.map(r => ({ ticker: r.ticker, recommended: r.amount, actual: r.amount })),
   };
   renderConfirmStep();
-  document.querySelectorAll('.view').forEach(v => v.hidden = true);
-  document.getElementById('view-plan-confirm').hidden = false;
+  showView('plan-confirm');
   inConfirmView = true;
   document.getElementById('backBtn').classList.add('visible');
 }
 
 function closeConfirmStep() {
   inConfirmView = false;
+  const source = confirmContext ? confirmContext.source : null;
   confirmContext = null;
-  document.getElementById('view-plan-confirm').hidden = true;
-  if (activeTab === 'plan') {
-    document.getElementById('view-plan-projected').hidden = false;
+  if (source === 'plan') {
+    inPlanProjected = true;
+    showView('plan-projected');
     document.getElementById('backBtn').classList.add('visible');
   } else {
     switchTab('activity');
@@ -693,14 +1015,15 @@ function renderSettings() {
 
 function renderAll() {
   renderPortfolio();
-  renderTargets();
-  renderRecommend();
-  renderProjected();
+  if (activeTab === 'strategy' && targetsDraft) renderStrategyView();
+  renderContribute();
+  if (inPlanRecommend) renderRecommend();
+  if (inPlanProjected) renderProjected();
   renderActivity();
   renderSettings();
 }
 
-// ---------- Event wiring: Targets inputs ----------
+// ---------- Event wiring ----------
 
 document.addEventListener('input', (e) => {
   const idx = e.target.dataset.idx;
@@ -715,6 +1038,7 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'cashInput') {
     state.cash = parseFloat(e.target.value) || 0;
     saveState();
+    renderContribute();
     return;
   }
   if (e.target.id === 'maxTradesInput') {
@@ -734,23 +1058,21 @@ document.addEventListener('input', (e) => {
   }
   if (idx === undefined) return;
 
-  if (e.target.classList.contains('target-ticker')) {
-    state.targets[idx].ticker = e.target.value.toUpperCase();
-    saveState();
-  } else if (e.target.classList.contains('target-weight')) {
-    state.targets[idx].weight = (parseFloat(e.target.value) || 0) / 100;
-    saveState();
-    const total = state.targets.reduce((s, r) => s + r.weight, 0);
-    document.getElementById('targetTotal').textContent = fmtPct(total);
-    const warning = document.getElementById('targetWarning');
-    warning.textContent = Math.abs(total - 1) > 0.001 ? `Target weights sum to ${fmtPct(total)}, not 100%.` : '';
-  } else if (e.target.classList.contains('holding-ticker')) {
-    state.holdings[idx].ticker = e.target.value.toUpperCase();
-    saveState();
-  } else if (e.target.classList.contains('holding-value')) {
-    state.holdings[idx].value = parseFloat(e.target.value) || 0;
-    saveState();
-    document.getElementById('holdingsTotal').textContent = fmtMoney(holdingsTotal());
+  // Holdings edit screen (draft)
+  if (e.target.classList.contains('holding-draft-ticker')) {
+    holdingsDraft[idx].ticker = e.target.value.toUpperCase();
+    renderHoldingsEditView();
+  } else if (e.target.classList.contains('holding-draft-value')) {
+    holdingsDraft[idx].value = parseFloat(e.target.value) || 0;
+    renderHoldingsEditView();
+
+  // Strategy screen (draft)
+  } else if (e.target.classList.contains('target-draft-ticker')) {
+    targetsDraft[idx].ticker = e.target.value.toUpperCase();
+    renderStrategyView();
+  } else if (e.target.classList.contains('target-draft-weight')) {
+    targetsDraft[idx].weight = (parseFloat(e.target.value) || 0) / 100;
+    renderStrategyView();
   }
 });
 
@@ -758,35 +1080,48 @@ document.addEventListener('click', (e) => {
   if (e.target.classList.contains('row-delete')) {
     const idx = parseInt(e.target.dataset.idx, 10);
     const table = e.target.dataset.table;
-    if (table === 'target') state.targets.splice(idx, 1);
-    else state.holdings.splice(idx, 1);
-    saveState();
-    renderTargets();
+    if (table === 'target-draft') {
+      targetsDraft.splice(idx, 1);
+      renderStrategyView();
+    } else if (table === 'holding-draft') {
+      holdingsDraft.splice(idx, 1);
+      renderHoldingsEditView();
+    }
   }
 });
 
 document.getElementById('addTargetRow').addEventListener('click', () => {
-  state.targets.push({ ticker: '', weight: 0 });
-  saveState();
-  renderTargets();
+  targetsDraft.push({ ticker: '', weight: 0 });
+  renderStrategyView();
 });
 
 document.getElementById('addHoldingRow').addEventListener('click', () => {
-  state.holdings.push({ ticker: '', value: 0 });
-  saveState();
-  renderTargets();
+  holdingsDraft.push({ ticker: '', value: 0 });
+  renderHoldingsEditView();
 });
+
+document.getElementById('allowNewPositions').addEventListener('change', (e) => {
+  allowNewDraft = e.target.checked;
+  renderStrategyView();
+});
+
+document.getElementById('openHoldingsEditBtn').addEventListener('click', openHoldingsEdit);
+document.getElementById('saveHoldingsBtn').addEventListener('click', saveHoldingsEdit);
+document.getElementById('saveStrategyBtn').addEventListener('click', saveStrategy);
 
 document.getElementById('generatePlanBtn').addEventListener('click', () => {
-  currentPlan = generatePlan();
-  planStep = 'recommend';
-  switchTab('plan');
+  const validation = computeValidation();
+  if (validation.blocking.length > 0) return;
+  openPreflight();
 });
 
+document.getElementById('preflightGenerateBtn').addEventListener('click', proceedFromPreflight);
+
 document.getElementById('reviewAllocationBtn').addEventListener('click', () => {
+  inPlanRecommend = false;
+  inPlanProjected = true;
   planStep = 'projected';
-  document.getElementById('view-plan-recommend').hidden = true;
-  document.getElementById('view-plan-projected').hidden = false;
+  showView('plan-projected');
   renderProjected();
 });
 
@@ -869,10 +1204,11 @@ document.getElementById('importFile').addEventListener('change', (e) => {
       if (typeof imported.minTradeAmount !== 'number') imported.minTradeAmount = 0;
       if (typeof imported.roundTo !== 'number') imported.roundTo = 0;
       if (typeof imported.currency !== 'string') imported.currency = 'USD';
+      if (typeof imported.allowIntentionalNewPositions !== 'boolean') imported.allowIntentionalNewPositions = true;
       state = imported;
       currentPlan = null;
       saveState();
-      renderAll();
+      switchTab('portfolio');
     } catch (err) {
       alert('Could not import file: ' + err.message);
     }

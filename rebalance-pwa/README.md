@@ -10,11 +10,26 @@ Export/Import buttons (under Settings) to back up or move data between devices.
 **Screens:**
 - **Portfolio** — invested-holdings total (matches the donut chart below it exactly),
   a breakdown line showing available cash and the combined total separately, current
-  allocation donut chart, available cash / target accuracy / holdings count, and a
-  holdings table with current vs. target weight.
-- **Targets** — edit your target allocation, current holdings, cash to invest, max
-  trades, minimum trade amount, and a rounding increment. Tap **Generate Plan** to
-  move to the Plan tab.
+  allocation donut chart, available cash / target accuracy / holdings count, a
+  holdings table with current vs. target weight, and an **Edit Holdings** action.
+  A warning banner surfaces here automatically if your saved data has any validation
+  issues, even if you never open the editor.
+- **Holdings** (reached via Edit Holdings) — edit your current positions in a staged
+  draft: every row is validated live (duplicate ticker, blank ticker, negative value)
+  and **Save Changes** stays disabled until everything's clean, so a bad edit can
+  never silently corrupt your data.
+- **Strategy** — set your target allocation, same staged-draft pattern as Holdings.
+  A target with no matching holding is flagged as informational ("no current holding
+  — allowed if intentional"); the **Allow intentional new positions** checkbox controls
+  whether that's treated as fine (default) or as something you must explicitly
+  acknowledge before generating a plan.
+- **Contribute** — enter cash to invest, minimum trade amount, max trades, and a
+  rounding increment for today's contribution. **Generate Plan** is disabled until
+  every validation issue (see below) is resolved.
+- **Pre-flight Check** — a checklist confirming targets sum to 100%, no duplicate or
+  blank tickers, no negative values, and cash is positive, plus non-blocking notices
+  for holdings without a matching target or targets without a matching holding.
+  Generating a plan never changes your data by itself.
 - **Plan** — step 1 shows recommended buys per ticker with a progress bar (% of cash
   used) and explains any skipped positions; step 2 shows a before/after allocation
   comparison and a target-accuracy score, then three actions:
@@ -28,6 +43,16 @@ Export/Import buttons (under Settings) to back up or move data between devices.
   have their own **Mark Completed** button so you can execute them later, at which
   point they update in place (edited amounts and all) rather than duplicating.
 - **Settings** — currency, Export/Import/Reset, and app info.
+
+**Validation, in full:** targets must sum to 100%; no duplicate tickers within
+Targets or within Holdings; no blank ticker symbols; no negative values; cash must
+be greater than zero; a holding with no matching target is flagged (informational,
+non-blocking — it just won't factor into target-based buys); a target with no
+matching holding is flagged as needing deliberate acknowledgment (the "Allow
+intentional new positions" checkbox, on by default). Duplicates specifically matter
+because internal lookups key tickers into a map — an unnoticed duplicate would
+silently overwrite an earlier entry and throw off every calculation downstream, so
+Holdings and Strategy are edited as drafts and can only be saved once they're clean.
 
 **Allocation logic:** buying any amount of an underweight position (without
 overshooting its target) reduces total tracking error by the same amount per dollar,
@@ -97,7 +122,8 @@ working offline after the first load.
 ## File structure
 
 ```
-index.html        UI markup (Portfolio/Targets/Plan/Activity/Settings tabs)
+index.html        UI markup (Portfolio/Strategy/Contribute/Activity/Settings tabs,
+                  plus pushed screens: Edit Holdings, Pre-flight Check, Plan steps)
 styles.css        Styling (light theme)
 app.js            App logic: state, calculations, persistence, import/export
 manifest.json     PWA manifest (name, icons, theme)

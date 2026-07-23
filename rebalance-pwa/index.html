@@ -33,6 +33,8 @@
         <div class="value-breakdown" id="portfolioBreakdown"></div>
       </div>
 
+      <div class="banner warn" id="portfolioIssuesBanner" hidden></div>
+
       <div class="card">
         <div class="card-title-row">
           <h2>Current Allocation</h2>
@@ -59,7 +61,10 @@
       </div>
 
       <div class="card">
-        <div class="card-title-row"><h2>Holdings</h2></div>
+        <div class="card-title-row-info">
+          <h2>Holdings</h2>
+          <span class="mini-hint">Holdings are your current positions. Targets are set in the Strategy tab.</span>
+        </div>
         <table class="plain-table">
           <thead>
             <tr><th>Ticker</th><th>Value</th><th>Current %</th><th>Target %</th></tr>
@@ -67,37 +72,78 @@
           <tbody id="portfolioHoldingsBody"></tbody>
         </table>
       </div>
+
+      <button class="row-btn nav-row" id="openHoldingsEditBtn">
+        <span>Edit Holdings</span>
+        <span class="row-sub">Update your current positions</span>
+      </button>
     </section>
 
-    <!-- TARGETS -->
-    <section class="view" id="view-targets" hidden>
-      <h1 class="view-title">Targets</h1>
+    <!-- HOLDINGS EDIT (pushed from Portfolio) -->
+    <section class="view" id="view-holdings-edit" hidden>
+      <h1 class="view-title">Holdings</h1>
+      <p class="view-subtitle">Edit current positions</p>
+
+      <div class="banner error" id="holdingsBanner" hidden></div>
+
+      <div class="card">
+        <table class="edit-table">
+          <thead><tr><th>Ticker</th><th>Value (USD)</th><th></th></tr></thead>
+        </table>
+        <div id="holdingEditRows"></div>
+        <button class="link-btn" id="addHoldingRow">+ Add holding</button>
+        <div class="totals-line">Total <span id="holdingsEditTotal">$0</span></div>
+      </div>
+
+      <button class="primary-btn" id="saveHoldingsBtn" disabled>Save Changes</button>
+      <p class="hint-text" id="saveHoldingsHint">Fix the issues above to enable saving.</p>
+    </section>
+
+    <!-- STRATEGY -->
+    <section class="view" id="view-strategy" hidden>
+      <h1 class="view-title">Strategy</h1>
       <p class="view-subtitle">Set your target allocation</p>
 
+      <div class="banner warn" id="strategyBanner" hidden></div>
+
       <div class="card">
-        <div id="targetRows"></div>
+        <div id="targetEditRows"></div>
         <button class="link-btn" id="addTargetRow">+ Add ticker</button>
         <div class="totals-line">Total <span id="targetTotal">0%</span></div>
-        <div class="warning" id="targetWarning"></div>
       </div>
 
-      <div class="card">
-        <div class="field-row">
-          <div class="field-icon">&#128179;</div>
-          <div class="field-body">
-            <label for="cashInput">Cash to invest</label>
-            <input type="number" step="0.01" id="cashInput" placeholder="0.00">
-          </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="allowNewPositions">
+        <div>
+          <div class="toggle-label">Allow intentional new positions</div>
+          <div class="toggle-sub">A target with no current holding is fine — you just haven't bought it yet</div>
         </div>
+      </label>
+
+      <button class="primary-btn" id="saveStrategyBtn" disabled>Save Strategy</button>
+      <p class="hint-text" id="saveStrategyHint">Fix the issues above to enable saving.</p>
+    </section>
+
+    <!-- CONTRIBUTE (entry point for a new contribution) -->
+    <section class="view" id="view-contribute" hidden>
+      <h1 class="view-title">New Contribution</h1>
+      <p class="view-subtitle">Configure today's contribution</p>
+
+      <div class="card">
+        <div class="field-body">
+          <label for="cashInput">Cash to invest (USD)</label>
+          <input type="number" step="0.01" id="cashInput" placeholder="0.00" class="cash-input-big">
+        </div>
+        <div class="field-error" id="cashError"></div>
       </div>
 
       <div class="card">
-        <div class="toggle-row disabled">
-          <div>
-            <div class="toggle-label">New contributions only</div>
-            <div class="toggle-sub">This app never sells existing holdings</div>
+        <div class="field-row spaced">
+          <div class="field-body">
+            <label for="minTradeInput">Minimum trade amount</label>
+            <div class="toggle-sub">Skip a position rather than buy less than this</div>
           </div>
-          <div class="toggle-pill on">On</div>
+          <input type="number" min="0" step="1" id="minTradeInput" class="small-input">
         </div>
         <div class="field-row spaced">
           <div class="field-body">
@@ -108,30 +154,48 @@
         </div>
         <div class="field-row spaced">
           <div class="field-body">
-            <label for="minTradeInput">Minimum trade amount</label>
-            <div class="toggle-sub">Skip a position rather than buy less than this</div>
-          </div>
-          <input type="number" min="0" step="1" id="minTradeInput" class="small-input">
-        </div>
-        <div class="field-row spaced">
-          <div class="field-body">
             <label for="roundToInput">Round trades to nearest</label>
             <div class="toggle-sub">0 = exact amounts, no rounding</div>
           </div>
           <input type="number" min="0" step="1" id="roundToInput" class="small-input">
         </div>
+        <div class="toggle-row disabled">
+          <div>
+            <div class="toggle-label">Use fractional shares</div>
+            <div class="toggle-sub">Assumed on — no share-price data is tracked, so amounts are in dollars</div>
+          </div>
+          <div class="toggle-pill on">On</div>
+        </div>
+        <div class="toggle-row disabled">
+          <div>
+            <div class="toggle-label">New contributions only</div>
+            <div class="toggle-sub">This app never sells existing holdings</div>
+          </div>
+          <div class="toggle-pill on">On</div>
+        </div>
       </div>
+
+      <div class="banner error" id="contributeBanner" hidden></div>
+
+      <button class="primary-btn" id="generatePlanBtn" disabled>Generate Plan</button>
+      <p class="hint-text" id="generatePlanHint">Resolve the issues above to continue.</p>
+    </section>
+
+    <!-- PRE-FLIGHT CHECK -->
+    <section class="view" id="view-preflight" hidden>
+      <h1 class="view-title">Pre-flight Check</h1>
+      <p class="view-subtitle">Review before generating your plan</p>
+
+      <div class="banner good" id="preflightSummary"></div>
 
       <div class="card">
-        <div class="holdings-edit-header">
-          <h2>Current Holdings</h2>
-          <button class="link-btn" id="addHoldingRow">+ Add</button>
-        </div>
-        <div id="holdingRows"></div>
-        <div class="totals-line">Total <span id="holdingsTotal">$0</span></div>
+        <div id="preflightChecks"></div>
       </div>
 
-      <button class="primary-btn" id="generatePlanBtn">Generate Plan</button>
+      <div id="preflightWarnings"></div>
+
+      <button class="primary-btn" id="preflightGenerateBtn">Generate Plan</button>
+      <p class="hint-text">No changes will be made to your account.</p>
     </section>
 
     <!-- PLAN: step 1 recommendation -->
@@ -241,11 +305,11 @@
     <button class="tab" data-tab="portfolio">
       <span class="tab-icon">&#8962;</span><span>Portfolio</span>
     </button>
-    <button class="tab" data-tab="targets">
-      <span class="tab-icon">&#8982;</span><span>Targets</span>
+    <button class="tab" data-tab="strategy">
+      <span class="tab-icon">&#8982;</span><span>Strategy</span>
     </button>
-    <button class="tab" data-tab="plan">
-      <span class="tab-icon">&#9776;</span><span>Plan</span>
+    <button class="tab" data-tab="contribute">
+      <span class="tab-icon">&#9776;</span><span>Contribute</span>
     </button>
     <button class="tab" data-tab="activity">
       <span class="tab-icon">&#9741;</span><span>Activity</span>

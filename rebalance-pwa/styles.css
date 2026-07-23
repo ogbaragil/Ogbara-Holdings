@@ -668,6 +668,175 @@ input[type="text"], input[type="number"] {
   font-size: 0.9rem;
 }
 
+/* Validation banners & inline errors */
+
+.banner {
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 0.85rem;
+}
+
+.banner-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.banner-sub { font-size: 0.8rem; }
+
+.banner ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+}
+
+.banner.error { background: #fef2f2; color: #991b1b; }
+.banner.caution { background: #fffbeb; color: #92400e; }
+.banner.good { background: var(--good-soft); color: #166534; }
+
+.field-error {
+  color: var(--bad);
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+
+.cash-input-big {
+  font-size: 1.3rem;
+  padding: 12px;
+  text-align: center;
+}
+
+.row-error {
+  color: var(--bad);
+  font-size: 0.72rem;
+  margin: -4px 0 6px 18px;
+}
+
+.card-title-row-info {
+  margin-bottom: 10px;
+}
+
+.card-title-row-info h2 { margin: 0 0 2px; font-size: 1rem; }
+
+.mini-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+  display: block;
+}
+
+.nav-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  color: var(--accent);
+  font-weight: 700;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 12px 14px;
+}
+
+.nav-row .row-sub {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.edit-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 4px;
+}
+
+.edit-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  padding: 0 0 6px;
+}
+
+.primary-btn:disabled, .primary-btn[disabled] {
+  background: #cbd5e1;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+/* Pre-flight checklist */
+
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.check-item:last-child { border-bottom: none; }
+
+.check-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-top: 1px;
+}
+
+.check-icon.pass { background: var(--good-soft); color: var(--good); }
+.check-icon.fail { background: #fef2f2; color: var(--bad); }
+.check-icon.info { background: #fffbeb; color: #92400e; }
+.check-icon.neutral { background: var(--accent-soft); color: var(--accent); }
+
+.check-label { font-weight: 600; }
+.check-detail { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+
+.check-item.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-edit-wrap { margin-bottom: 10px; }
+.row-edit-wrap .row-edit { margin-bottom: 4px; }
+
+.row-error.info {
+  color: var(--warn);
+}
+
 .activity-card {
   background: var(--card);
   border: 1px solid var(--border);
