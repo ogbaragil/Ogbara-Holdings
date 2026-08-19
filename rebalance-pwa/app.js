@@ -538,6 +538,52 @@ function saveHoldingsEdit() {
   closeHoldingsEdit();
 }
 
+// Lightweight update used while the user is actively typing in a holdings
+// draft row. Unlike renderHoldingsEditView(), this never rebuilds the input
+// elements themselves, so focus (and the on-screen keyboard on mobile) is
+// never lost mid-keystroke. Full renderHoldingsEditView() is still used for
+// the initial render and whenever rows are added/removed.
+function updateHoldingsSummaryUI() {
+  const errors = computeRowErrors(holdingsDraft, 'value');
+  const totalIssues = errors.reduce((s, e) => s + e.length, 0);
+
+  const banner = document.getElementById('holdingsBanner');
+  if (totalIssues > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">&#9888; ${totalIssues} issue${totalIssues > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve all issues to save your holdings.</div>`;
+  } else {
+    banner.hidden = true;
+  }
+
+  const rows = document.querySelectorAll('#holdingEditRows .row-edit-wrap');
+  rows.forEach((wrap, idx) => {
+    const row = holdingsDraft[idx];
+    if (!row) return;
+    const dot = wrap.querySelector('.ticker-dot');
+    if (dot) dot.style.background = hashColor(row.ticker || '?');
+
+    const rowErrors = errors[idx] || [];
+    let errDiv = wrap.querySelector('.row-error');
+    if (rowErrors.length) {
+      if (!errDiv) {
+        errDiv = document.createElement('div');
+        errDiv.className = 'row-error';
+        wrap.appendChild(errDiv);
+      }
+      errDiv.textContent = rowErrors.join(' · ');
+    } else if (errDiv) {
+      errDiv.remove();
+    }
+  });
+
+  document.getElementById('holdingsEditTotal').textContent = fmtMoney(holdingsDraft.reduce((s, r) => s + (r.value || 0), 0));
+
+  const saveBtn = document.getElementById('saveHoldingsBtn');
+  saveBtn.disabled = totalIssues > 0;
+  document.getElementById('saveHoldingsHint').hidden = totalIssues === 0;
+}
+
 function renderHoldingsEditView() {
   const errors = computeRowErrors(holdingsDraft, 'value');
   const totalIssues = errors.reduce((s, e) => s + e.length, 0);
@@ -576,6 +622,76 @@ function renderHoldingsEditView() {
 }
 
 // ---------- Strategy (tab, staged draft) ----------
+
+// Lightweight update used while the user is actively typing in a strategy
+// draft row. See updateHoldingsSummaryUI() above for why this avoids
+// rebuilding the input elements.
+function updateStrategySummaryUI() {
+  const rowErrors = computeRowErrors(targetsDraft, 'weight');
+  const totalIssues = rowErrors.reduce((s, e) => s + e.length, 0);
+  const sum = targetsDraft.reduce((s, t) => s + (t.weight || 0), 0);
+  const sumOk = Math.abs(sum - 1) <= 0.001;
+
+  const banner = document.getElementById('strategyBanner');
+  if (totalIssues > 0) {
+    banner.hidden = false;
+    banner.className = 'banner error';
+    banner.innerHTML = `<div class="banner-title">&#9888; ${totalIssues} issue${totalIssues > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve all issues to save your strategy.</div>`;
+  } else if (!sumOk) {
+    const remaining = (1 - sum) * 100;
+    banner.hidden = false;
+    banner.className = 'banner caution';
+    banner.innerHTML = `<div class="banner-title">&#9888; Total = ${fmtPct(sum)}</div><div class="banner-sub">Targets must equal 100%. ${remaining >= 0 ? fmtPct(remaining / 100) + ' remaining' : fmtPct(-remaining / 100) + ' over'}</div>`;
+  } else {
+    banner.hidden = true;
+  }
+
+  const cross = crossValidate(state.holdings, targetsDraft);
+  const noHoldingSet = new Set(cross.targetsWithoutHolding);
+
+  const rows = document.querySelectorAll('#targetEditRows .row-edit-wrap');
+  rows.forEach((wrap, idx) => {
+    const row = targetsDraft[idx];
+    if (!row) return;
+    const dot = wrap.querySelector('.ticker-dot');
+    if (dot) dot.style.background = hashColor(row.ticker || '?');
+
+    const errs = [...(rowErrors[idx] || [])];
+    const norm = normTicker(row.ticker);
+    const noHolding = norm && noHoldingSet.has(norm) && !errs.length;
+
+    let errDiv = wrap.querySelector('.row-error:not(.info)');
+    if (errs.length) {
+      if (!errDiv) {
+        errDiv = document.createElement('div');
+        errDiv.className = 'row-error';
+        wrap.appendChild(errDiv);
+      }
+      errDiv.textContent = errs.join(' · ');
+    } else if (errDiv) {
+      errDiv.remove();
+    }
+
+    let infoDiv = wrap.querySelector('.row-error.info');
+    if (noHolding) {
+      if (!infoDiv) {
+        infoDiv = document.createElement('div');
+        infoDiv.className = 'row-error info';
+        infoDiv.textContent = 'No current holding (allowed if intentional)';
+        wrap.appendChild(infoDiv);
+      }
+    } else if (infoDiv) {
+      infoDiv.remove();
+    }
+  });
+
+  document.getElementById('targetTotal').textContent = fmtPct(sum);
+
+  const saveBtn = document.getElementById('saveStrategyBtn');
+  const canSave = totalIssues === 0 && sumOk;
+  saveBtn.disabled = !canSave;
+  document.getElementById('saveStrategyHint').hidden = canSave;
+}
 
 function renderStrategyView() {
   const rowErrors = computeRowErrors(targetsDraft, 'weight');
@@ -640,13 +756,21 @@ function saveStrategy() {
   switchTab('portfolio');
 }
 
+// Writes a numeric value into an input unless the user is currently typing
+// in it — avoids resetting the caret to the end of the field mid-keystroke.
+function setNumberValueUnlessFocused(id, value) {
+  const el = document.getElementById(id);
+  if (document.activeElement === el) return;
+  el.value = value;
+}
+
 // ---------- Contribute (tab) ----------
 
 function renderContribute() {
-  document.getElementById('cashInput').value = state.cash;
-  document.getElementById('maxTradesInput').value = state.maxTrades;
-  document.getElementById('minTradeInput').value = state.minTradeAmount;
-  document.getElementById('roundToInput').value = state.roundTo;
+  setNumberValueUnlessFocused('cashInput', state.cash);
+  setNumberValueUnlessFocused('maxTradesInput', state.maxTrades);
+  setNumberValueUnlessFocused('minTradeInput', state.minTradeAmount);
+  setNumberValueUnlessFocused('roundToInput', state.roundTo);
 
   const cashOk = (state.cash || 0) > 0;
   document.getElementById('cashError').textContent = cashOk ? '' : 'Enter an amount greater than 0.';
@@ -1023,6 +1147,20 @@ function renderAll() {
   renderSettings();
 }
 
+// Uppercases an input's text in place, without touching the DOM node or
+// losing the caret position (setting .value directly, unlike replacing the
+// element via innerHTML, keeps focus intact).
+function setUppercaseInPlace(input) {
+  const upper = input.value.toUpperCase();
+  if (upper === input.value) return;
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  input.value = upper;
+  if (start !== null && end !== null) {
+    input.setSelectionRange(start, end);
+  }
+}
+
 // ---------- Event wiring ----------
 
 document.addEventListener('input', (e) => {
@@ -1060,19 +1198,21 @@ document.addEventListener('input', (e) => {
 
   // Holdings edit screen (draft)
   if (e.target.classList.contains('holding-draft-ticker')) {
-    holdingsDraft[idx].ticker = e.target.value.toUpperCase();
-    renderHoldingsEditView();
+    setUppercaseInPlace(e.target);
+    holdingsDraft[idx].ticker = e.target.value;
+    updateHoldingsSummaryUI();
   } else if (e.target.classList.contains('holding-draft-value')) {
     holdingsDraft[idx].value = parseFloat(e.target.value) || 0;
-    renderHoldingsEditView();
+    updateHoldingsSummaryUI();
 
   // Strategy screen (draft)
   } else if (e.target.classList.contains('target-draft-ticker')) {
-    targetsDraft[idx].ticker = e.target.value.toUpperCase();
-    renderStrategyView();
+    setUppercaseInPlace(e.target);
+    targetsDraft[idx].ticker = e.target.value;
+    updateStrategySummaryUI();
   } else if (e.target.classList.contains('target-draft-weight')) {
     targetsDraft[idx].weight = (parseFloat(e.target.value) || 0) / 100;
-    renderStrategyView();
+    updateStrategySummaryUI();
   }
 });
 
