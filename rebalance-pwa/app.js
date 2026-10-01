@@ -439,10 +439,13 @@ function renderPortfolio() {
 
   const validation = computeValidation();
   const banner = document.getElementById('portfolioIssuesBanner');
-  if (validation.blocking.length > 0) {
+  // Having no cash to invest is a normal state between contributions, not a data
+  // problem — it only blocks plan generation, so it's checked on Contribute instead.
+  const dataIssues = validation.checks.filter(c => !c.pass && c.key !== 'cashPositive').map(c => c.label);
+  if (dataIssues.length > 0) {
     banner.hidden = false;
     banner.className = 'banner error';
-    banner.innerHTML = `<div class="banner-title">&#9888; ${validation.blocking.length} issue${validation.blocking.length > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve these so calculations stay accurate.</div><ul>${validation.blocking.map(b => `<li>${b}</li>`).join('')}</ul>`;
+    banner.innerHTML = `<div class="banner-title">&#9888; ${dataIssues.length} issue${dataIssues.length > 1 ? 's' : ''} to fix</div><div class="banner-sub">Resolve these so calculations stay accurate.</div><ul>${dataIssues.map(b => `<li>${b}</li>`).join('')}</ul>`;
   } else {
     banner.hidden = true;
   }
