@@ -1,7 +1,7 @@
 {
-  "name": "Investment Rebalancing Assistant",
-  "short_name": "Rebalancer",
-  "description": "Track target allocation vs. current holdings and see what to buy or sell to rebalance.",
+  "name": "Allocate — Investment Rebalancing Assistant",
+  "short_name": "Allocate",
+  "description": "Set a target allocation and see exactly where your next contribution should go — buy-only rebalancing, no selling.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -9,7 +9,17 @@
   "theme_color": "#0f172a",
   "orientation": "portrait",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
