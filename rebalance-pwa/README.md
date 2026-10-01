@@ -126,7 +126,7 @@ index.html        UI markup (Portfolio/Strategy/Contribute/Activity/Settings tab
                   plus pushed screens: Edit Holdings, Pre-flight Check, Plan steps)
 styles.css        Styling (light theme)
 app.js            App logic: state, calculations, persistence, import/export
-manifest.json     PWA manifest (name, icons, theme)
+manifest.webmanifest PWA manifest (name, icons, theme)
 service-worker.js Offline caching
 icons/            App icons (192px, 512px)
 ```
