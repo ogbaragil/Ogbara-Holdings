@@ -83,6 +83,7 @@ let confirmContext = null; // { source: 'plan' | 'activity', activityId: string|
 
 // Draft copies used by the staged edit-then-save screens (Holdings, Strategy).
 let holdingsDraft = null;
+let holdingsRemoveMode = false;
 let targetsDraft = null;
 let allowNewDraft = true;
 
@@ -110,6 +111,7 @@ function loadState() {
       if (typeof parsed.roundTo !== 'number') parsed.roundTo = 0;
       if (typeof parsed.currency !== 'string') parsed.currency = 'USD';
       if (typeof parsed.allowIntentionalNewPositions !== 'boolean') parsed.allowIntentionalNewPositions = true;
+      if (typeof parsed.showLogos !== 'boolean') parsed.showLogos = true;
       return cleanMoneyData(parsed);
     }
   } catch (e) {
@@ -163,6 +165,30 @@ function hashColor(ticker) {
 function tickerName(ticker) {
   return TICKER_NAMES[ticker.toUpperCase()] || ticker;
 }
+// ---------- Ticker logos ----------
+// Logo images come from a public logo service. Only the ticker symbol is sent.
+// Every logo sits on top of a coloured monogram, so a missing logo (or the
+// setting being off, or being offline with no cached copy) still looks right.
+const LOGO_URL = (t) => `https://financialmodelingprep.com/image-stock/${encodeURIComponent(t)}.png`;
+function escAttr(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+function tickerLogo(ticker, size = 'sm') {
+  const t = normTicker(ticker || '');
+  const img = (t && state.showLogos !== false)
+    ? `<img src="${escAttr(LOGO_URL(t))}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.parentNode.classList.add('has-img')" onerror="this.remove()">`
+    : '';
+  return `<span class="tlogo tlogo-${size}" style="--c:${hashColor(t || '?')}" data-logo-ticker="${escAttr(t)}"><span class="tlogo-txt">${escAttr(initials(t || '?'))}</span>${img}</span>`;
+}
+// Swap a logo element in place once the ticker has been fully entered.
+function refreshLogoEl(el, ticker) {
+  if (!el) return;
+  const t = normTicker(ticker || '');
+  if (el.dataset.logoTicker === t) return;
+  const size = el.classList.contains('tlogo-md') ? 'md' : 'sm';
+  el.outerHTML = tickerLogo(t, size);
+}
+
 function initials(ticker) {
   return ticker.replace(/[^A-Za-z]/g, '').slice(0, 1).toUpperCase() || '?';
 }
@@ -473,7 +499,7 @@ function renderPortfolio() {
     const target = tMap.get(h.ticker.toUpperCase()) || 0;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><div class="ticker-cell"><span class="dot" style="background:${hashColor(h.ticker)}"></span>${h.ticker}</div></td>
+      <td><div class="ticker-cell">${tickerLogo(h.ticker)}${h.ticker}</div></td>
       <td>${fmtMoney(h.value)}</td>
       <td>${fmtPct(weight)}</td>
       <td>${target ? fmtPct(target) : '—'}</td>
@@ -536,6 +562,7 @@ function renderDonut(hTotal) {
 
 function openHoldingsEdit() {
   holdingsDraft = state.holdings.map(h => ({ ...h }));
+  holdingsRemoveMode = false;
   inHoldingsEdit = true;
   showView('holdings-edit');
   document.getElementById('backBtn').classList.add('visible');
@@ -578,8 +605,15 @@ function updateHoldingsSummaryUI() {
   rows.forEach((wrap, idx) => {
     const row = holdingsDraft[idx];
     if (!row) return;
-    const dot = wrap.querySelector('.ticker-dot');
-    if (dot) dot.style.background = hashColor(row.ticker || '?');
+    const logo = wrap.querySelector('.tlogo');
+    if (logo && logo.dataset.logoTicker !== normTicker(row.ticker || '')) {
+      const img = logo.querySelector('img');
+      if (img) img.remove();
+      logo.classList.remove('has-img');
+      logo.style.setProperty('--c', hashColor(normTicker(row.ticker || '') || '?'));
+      logo.querySelector('.tlogo-txt').textContent = initials(row.ticker || '?');
+      logo.dataset.logoTicker = '';
+    }
 
     const rowErrors = errors[idx] || [];
     let errDiv = wrap.querySelector('.row-error');
@@ -623,15 +657,18 @@ function renderHoldingsEditView() {
     const rowErrors = errors[idx];
     div.innerHTML = `
       <div class="row-edit">
-        <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
-        <input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-draft-ticker" placeholder="Ticker">
+        ${tickerLogo(row.ticker)}
+        <input type="text" value="${escAttr(row.ticker)}" data-idx="${idx}" class="holding-draft-ticker" placeholder="Ticker">
         <input type="number" inputmode="decimal" step="0.01" min="0" value="${fmtInput(row.value)}" data-idx="${idx}" class="holding-draft-value money-input">
-        <button class="row-delete" data-idx="${idx}" data-table="holding-draft">&times;</button>
+        ${holdingsRemoveMode ? `<button class="row-remove" data-idx="${idx}" aria-label="Remove ${escAttr(row.ticker || 'this holding')}">Remove</button>` : ''}
       </div>
       ${rowErrors.length ? `<div class="row-error">${rowErrors.join(' · ')}</div>` : ''}
     `;
     container.appendChild(div);
   });
+  const rmBtn = document.getElementById('toggleRemoveHoldings');
+  rmBtn.textContent = holdingsRemoveMode ? 'Done removing' : 'Remove a holding';
+  rmBtn.hidden = holdingsDraft.length === 0;
   document.getElementById('holdingsEditTotal').textContent = fmtMoney(holdingsDraft.reduce((s, r) => s + (r.value || 0), 0));
 
   const saveBtn = document.getElementById('saveHoldingsBtn');
@@ -671,8 +708,15 @@ function updateStrategySummaryUI() {
   rows.forEach((wrap, idx) => {
     const row = targetsDraft[idx];
     if (!row) return;
-    const dot = wrap.querySelector('.ticker-dot');
-    if (dot) dot.style.background = hashColor(row.ticker || '?');
+    const logo = wrap.querySelector('.tlogo');
+    if (logo && logo.dataset.logoTicker !== normTicker(row.ticker || '')) {
+      const img = logo.querySelector('img');
+      if (img) img.remove();
+      logo.classList.remove('has-img');
+      logo.style.setProperty('--c', hashColor(normTicker(row.ticker || '') || '?'));
+      logo.querySelector('.tlogo-txt').textContent = initials(row.ticker || '?');
+      logo.dataset.logoTicker = '';
+    }
 
     const errs = [...(rowErrors[idx] || [])];
     const norm = normTicker(row.ticker);
@@ -744,8 +788,8 @@ function renderStrategyView() {
     const noHolding = norm && noHoldingSet.has(norm) && !errs.length;
     div.innerHTML = `
       <div class="row-edit">
-        <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
-        <input type="text" value="${row.ticker}" data-idx="${idx}" class="target-draft-ticker" placeholder="Ticker">
+        ${tickerLogo(row.ticker)}
+        <input type="text" value="${escAttr(row.ticker)}" data-idx="${idx}" class="target-draft-ticker" placeholder="Ticker">
         <input type="number" step="0.01" value="${(row.weight * 100).toFixed(2)}" data-idx="${idx}" class="target-draft-weight">
         <button class="row-delete" data-idx="${idx}" data-table="target-draft">&times;</button>
       </div>
@@ -919,7 +963,7 @@ function renderRecommend() {
     const amountLabel = skipped ? '—' : fmtMoneyPrecise(r.buy) + (r.partial ? ' (partial)' : '');
     card.innerHTML = `
       <div class="rec-card-top">
-        <div class="ticker-badge" style="background:${hashColor(r.ticker)}">${initials(r.ticker)}</div>
+        ${tickerLogo(r.ticker, 'md')}
         <div class="rec-card-name">
           <div class="rec-card-ticker">${r.ticker}</div>
           <div class="rec-card-fullname">${tickerName(r.ticker)}</div>
@@ -988,7 +1032,7 @@ function renderProjected() {
     const targetVal = r.targetWeight;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><div class="ticker-cell"><span class="dot" style="background:${hashColor(r.ticker)}"></span>${r.ticker}</div></td>
+      <td><div class="ticker-cell">${tickerLogo(r.ticker)}${r.ticker}</div></td>
       <td>${fmtPct(targetVal)}</td>
       <td>${fmtPct(currentPct)}</td>
       <td>${fmtPct(afterPctVal)}</td>
@@ -1077,7 +1121,7 @@ function renderConfirmStep() {
     const row = document.createElement('div');
     row.className = 'confirm-row';
     row.innerHTML = `
-      <div class="ticker-badge" style="background:${hashColor(r.ticker)}">${initials(r.ticker)}</div>
+      ${tickerLogo(r.ticker, 'md')}
       <div class="rec-card-name">
         <div class="rec-card-ticker">${r.ticker}</div>
         <div class="rec-recommend">Recommended ${fmtMoneyPrecise(r.recommended)}</div>
@@ -1153,6 +1197,7 @@ function renderSettings() {
     });
   }
   select.value = state.currency || 'USD';
+  document.getElementById('logosToggle').checked = state.showLogos !== false;
 }
 
 function renderCurrencyLabels() {
@@ -1257,11 +1302,33 @@ document.addEventListener('click', (e) => {
     if (table === 'target-draft') {
       targetsDraft.splice(idx, 1);
       renderStrategyView();
-    } else if (table === 'holding-draft') {
-      holdingsDraft.splice(idx, 1);
-      renderHoldingsEditView();
     }
   }
+  if (e.target.classList.contains('row-remove')) {
+    const idx = parseInt(e.target.dataset.idx, 10);
+    holdingsDraft.splice(idx, 1);
+    if (holdingsDraft.length === 0) holdingsRemoveMode = false;
+    renderHoldingsEditView();
+  }
+});
+
+document.getElementById('toggleRemoveHoldings').addEventListener('click', () => {
+  holdingsRemoveMode = !holdingsRemoveMode;
+  renderHoldingsEditView();
+});
+
+// When a ticker field is finished (blur / enter), fetch its logo.
+document.addEventListener('change', (e) => {
+  if (e.target.classList && (e.target.classList.contains('holding-draft-ticker') || e.target.classList.contains('target-draft-ticker'))) {
+    const logo = e.target.closest('.row-edit')?.querySelector('.tlogo');
+    refreshLogoEl(logo, e.target.value);
+  }
+});
+
+document.getElementById('logosToggle').addEventListener('change', (e) => {
+  state.showLogos = e.target.checked;
+  saveState();
+  renderAll();
 });
 
 document.getElementById('addTargetRow').addEventListener('click', () => {

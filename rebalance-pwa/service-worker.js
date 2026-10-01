@@ -1,6 +1,7 @@
-const CACHE_NAME = 'rebalance-assistant-v6';
+const CACHE_NAME = 'rebalance-assistant-v7';
 // Note: no './index.html' here. Cloudflare Pages redirects /index.html -> /,
 // and a cached redirect served to a page navigation fails with ERR_FAILED.
+const LOGO_CACHE = 'allocate-logos-v1';
 const ASSETS = [
   './',
   './styles.css',
@@ -36,7 +37,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== LOGO_CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
@@ -57,6 +58,21 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(async () => (await caches.match('./')) || Response.error())
+    );
+    return;
+  }
+
+  // Ticker logos from the logo service: cache first so they work offline after one load.
+  if (req.destination === 'image' && new URL(req.url).origin !== self.location.origin) {
+    event.respondWith(
+      caches.open(LOGO_CACHE).then(async (cache) => {
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        const res = await fetch(req);
+        // <img> requests are no-cors, so the response is opaque; cache it anyway.
+        if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
+        return res;
+      })
     );
     return;
   }

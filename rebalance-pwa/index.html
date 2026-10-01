@@ -92,7 +92,7 @@
           <thead><tr><th>Ticker</th><th>Value (<span class="currency-code">USD</span>)</th><th></th></tr></thead>
         </table>
         <div id="holdingEditRows"></div>
-        <button class="link-btn" id="addHoldingRow">+ Add holding</button>
+        <div class="edit-actions"><button class="link-btn" id="addHoldingRow">+ Add holding</button><button class="link-btn subtle" id="toggleRemoveHoldings">Remove a holding</button></div>
         <div class="totals-line">Total <span id="holdingsEditTotal">$0</span></div>
       </div>
 
@@ -286,6 +286,11 @@
       </div>
 
       <div class="card">
+        <div class="card-title-row"><h2>Display</h2></div>
+        <label class="toggle-row"><span><strong>Ticker logos</strong><small>Loads company logos by ticker symbol from a public logo service. Turn off to keep the app fully offline.</small></span><input type="checkbox" id="logosToggle"></label>
+      </div>
+
+      <div class="card">
         <div class="card-title-row"><h2>Data</h2></div>
         <button class="row-btn" id="exportBtn">Export JSON</button>
         <button class="row-btn" id="importBtn">Import JSON</button>
@@ -295,7 +300,7 @@
 
       <div class="card">
         <div class="card-title-row"><h2>About</h2></div>
-        <p class="about-text">All data is stored only on this device. Nothing is sent to a server. Use Export/Import to move data between devices.</p>
+        <p class="about-text">All data is stored only on this device. Your holdings and amounts are never sent anywhere; with ticker logos on, only the ticker symbols are used to fetch logo images. Use Export/Import to move data between devices.</p>
         <p class="about-text" id="lastUpdated"></p>
       </div>
     </section>

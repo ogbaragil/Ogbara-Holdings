@@ -890,3 +890,21 @@ input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .money-input, #cashInput { font-variant-numeric: tabular-nums; }
+
+/* Ticker logos: coloured monogram underneath, logo image on top when available */
+.tlogo { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; background: var(--c, #94a3b8); color: #fff; font-weight: 700; }
+.tlogo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 2px; }
+.tlogo.has-img { box-shadow: inset 0 0 0 1px var(--border); background: #fff; }
+.tlogo-sm { width: 24px; height: 24px; border-radius: 7px; font-size: 0.7rem; }
+.tlogo-md { width: 38px; height: 38px; border-radius: 10px; font-size: 0.85rem; }
+.tlogo-md img { padding: 4px; }
+
+/* Holdings editor: add / remove actions */
+.edit-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.link-btn.subtle { color: var(--muted); font-weight: 500; }
+.row-remove { flex-shrink: 0; background: #fef2f2; color: var(--bad); border: 1px solid #fecaca; border-radius: 8px; padding: 7px 10px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+
+/* Settings toggle */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
+.toggle-row small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
+.toggle-row input { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--accent); }
