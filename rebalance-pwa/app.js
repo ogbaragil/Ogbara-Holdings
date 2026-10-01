@@ -110,7 +110,7 @@ function loadState() {
       if (typeof parsed.roundTo !== 'number') parsed.roundTo = 0;
       if (typeof parsed.currency !== 'string') parsed.currency = 'USD';
       if (typeof parsed.allowIntentionalNewPositions !== 'boolean') parsed.allowIntentionalNewPositions = true;
-      return parsed;
+      return cleanMoneyData(parsed);
     }
   } catch (e) {
     console.error('Failed to load saved data, using defaults', e);
@@ -124,6 +124,21 @@ function saveState() {
 }
 
 // ---------- Formatting helpers ----------
+
+// Money is stored to the cent. Adding decimals in JS drifts (e.g. 30736.999999999),
+// so every value is rounded on the way in and shown cleanly in inputs.
+function round2(n) {
+  const x = Number(n);
+  return Number.isFinite(x) ? Math.round(x * 100) / 100 : 0;
+}
+function fmtInput(n) {
+  return String(round2(n));
+}
+function cleanMoneyData(d) {
+  if (Array.isArray(d.holdings)) d.holdings.forEach(h => { h.value = round2(h.value); });
+  d.cash = round2(d.cash);
+  return d;
+}
 
 function fmtMoney(n) {
   return n.toLocaleString(undefined, {
@@ -536,7 +551,7 @@ function closeHoldingsEdit() {
 function saveHoldingsEdit() {
   const errors = computeRowErrors(holdingsDraft, 'value');
   if (errors.some(e => e.length > 0)) return;
-  state.holdings = holdingsDraft.map(h => ({ ticker: normTicker(h.ticker), value: h.value }));
+  state.holdings = holdingsDraft.map(h => ({ ticker: normTicker(h.ticker), value: round2(h.value) }));
   saveState();
   closeHoldingsEdit();
 }
@@ -610,7 +625,7 @@ function renderHoldingsEditView() {
       <div class="row-edit">
         <span class="ticker-dot" style="background:${hashColor(row.ticker || '?')}"></span>
         <input type="text" value="${row.ticker}" data-idx="${idx}" class="holding-draft-ticker" placeholder="Ticker">
-        <input type="number" step="0.01" value="${row.value}" data-idx="${idx}" class="holding-draft-value">
+        <input type="number" inputmode="decimal" step="0.01" min="0" value="${fmtInput(row.value)}" data-idx="${idx}" class="holding-draft-value money-input">
         <button class="row-delete" data-idx="${idx}" data-table="holding-draft">&times;</button>
       </div>
       ${rowErrors.length ? `<div class="row-error">${rowErrors.join(' · ')}</div>` : ''}
@@ -770,7 +785,7 @@ function setNumberValueUnlessFocused(id, value) {
 // ---------- Contribute (tab) ----------
 
 function renderContribute() {
-  setNumberValueUnlessFocused('cashInput', state.cash);
+  setNumberValueUnlessFocused('cashInput', fmtInput(state.cash));
   setNumberValueUnlessFocused('maxTradesInput', state.maxTrades);
   setNumberValueUnlessFocused('minTradeInput', state.minTradeAmount);
   setNumberValueUnlessFocused('roundToInput', state.roundTo);
@@ -1067,7 +1082,7 @@ function renderConfirmStep() {
         <div class="rec-card-ticker">${r.ticker}</div>
         <div class="rec-recommend">Recommended ${fmtMoneyPrecise(r.recommended)}</div>
       </div>
-      <input type="number" step="0.01" value="${r.actual.toFixed(2)}" data-confirm-idx="${idx}" class="confirm-actual">
+      <input type="number" inputmode="decimal" step="0.01" min="0" value="${fmtInput(r.actual)}" data-confirm-idx="${idx}" class="confirm-actual money-input">
     `;
     container.appendChild(row);
   });
@@ -1088,11 +1103,11 @@ function applyConfirmedPurchases() {
   nonzero.forEach(r => {
     const ticker = r.ticker.toUpperCase();
     const existing = state.holdings.find(h => h.ticker.toUpperCase() === ticker);
-    if (existing) existing.value += r.actual;
-    else state.holdings.push({ ticker: r.ticker, value: r.actual });
+    if (existing) existing.value = round2(existing.value + r.actual);
+    else state.holdings.push({ ticker: r.ticker, value: round2(r.actual) });
   });
   const totalInvested = nonzero.reduce((s, r) => s + r.actual, 0);
-  state.cash = Math.max(0, (state.cash || 0) - totalInvested);
+  state.cash = round2(Math.max(0, (state.cash || 0) - totalInvested));
 
   if (confirmContext.source === 'activity' && confirmContext.activityId) {
     const entry = state.activity.find(a => a.id === confirmContext.activityId);
@@ -1140,7 +1155,23 @@ function renderSettings() {
   select.value = state.currency || 'USD';
 }
 
+function renderCurrencyLabels() {
+  document.querySelectorAll('.currency-code').forEach(el => { el.textContent = state.currency || 'USD'; });
+}
+
+// Tapping a money field selects its contents so you can type a new figure straight over it.
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches && e.target.matches('.money-input, #cashInput')) {
+    setTimeout(() => { try { e.target.select(); } catch (_) {} }, 0);
+  }
+});
+// Stop a mouse/trackpad scroll from silently nudging a focused number field.
+document.addEventListener('wheel', (e) => {
+  if (e.target.type === 'number' && document.activeElement === e.target) e.target.blur();
+}, { passive: true });
+
 function renderAll() {
+  renderCurrencyLabels();
   renderPortfolio();
   if (activeTab === 'strategy' && targetsDraft) renderStrategyView();
   renderContribute();
@@ -1171,13 +1202,13 @@ document.addEventListener('input', (e) => {
 
   if (e.target.classList.contains('confirm-actual')) {
     const cIdx = parseInt(e.target.dataset.confirmIdx, 10);
-    confirmContext.rows[cIdx].actual = parseFloat(e.target.value) || 0;
+    confirmContext.rows[cIdx].actual = round2(parseFloat(e.target.value) || 0);
     updateConfirmTotal();
     return;
   }
 
   if (e.target.id === 'cashInput') {
-    state.cash = parseFloat(e.target.value) || 0;
+    state.cash = round2(parseFloat(e.target.value) || 0);
     saveState();
     renderContribute();
     return;
@@ -1205,7 +1236,7 @@ document.addEventListener('input', (e) => {
     holdingsDraft[idx].ticker = e.target.value;
     updateHoldingsSummaryUI();
   } else if (e.target.classList.contains('holding-draft-value')) {
-    holdingsDraft[idx].value = parseFloat(e.target.value) || 0;
+    holdingsDraft[idx].value = round2(parseFloat(e.target.value) || 0);
     updateHoldingsSummaryUI();
 
   // Strategy screen (draft)
@@ -1348,7 +1379,7 @@ document.getElementById('importFile').addEventListener('change', (e) => {
       if (typeof imported.roundTo !== 'number') imported.roundTo = 0;
       if (typeof imported.currency !== 'string') imported.currency = 'USD';
       if (typeof imported.allowIntentionalNewPositions !== 'boolean') imported.allowIntentionalNewPositions = true;
-      state = imported;
+      state = cleanMoneyData(imported);
       currentPlan = null;
       saveState();
       switchTab('portfolio');

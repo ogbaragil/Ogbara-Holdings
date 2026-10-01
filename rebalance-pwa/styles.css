@@ -884,3 +884,9 @@ input[type="text"], input[type="number"] {
 .tab.active { color: var(--accent); }
 
 .tab-icon { font-size: 1.2rem; }
+
+/* Money fields: no spinner arrows (they only nudge by cents) */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.money-input, #cashInput { font-variant-numeric: tabular-nums; }
