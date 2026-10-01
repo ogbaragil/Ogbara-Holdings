@@ -169,14 +169,24 @@ function tickerName(ticker) {
 // Logo images come from a public logo service. Only the ticker symbol is sent.
 // Every logo sits on top of a coloured monogram, so a missing logo (or the
 // setting being off, or being offline with no cached copy) still looks right.
-const LOGO_URL = (t) => `https://financialmodelingprep.com/image-stock/${encodeURIComponent(t)}.png`;
+// The default service returns a blank image for some ETFs (e.g. QQQ), so those
+// use the fund issuer's site icon instead. Add a ticker here to fix another one.
+const LOGO_DOMAIN_OVERRIDES = {
+  QQQ: 'invesco.com', QQQM: 'invesco.com', RSP: 'invesco.com',
+  SPY: 'ssga.com', SPLG: 'ssga.com', GLD: 'ssga.com',
+  IVV: 'ishares.com', IWM: 'ishares.com', IEFA: 'ishares.com', IEMG: 'ishares.com', AGG: 'ishares.com',
+  ARKK: 'ark-funds.com',
+};
+const LOGO_URL = (t) => LOGO_DOMAIN_OVERRIDES[t]
+  ? `https://www.google.com/s2/favicons?domain=${LOGO_DOMAIN_OVERRIDES[t]}&sz=128`
+  : `https://financialmodelingprep.com/image-stock/${encodeURIComponent(t)}.png`;
 function escAttr(v) {
   return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 function tickerLogo(ticker, size = 'sm') {
   const t = normTicker(ticker || '');
   const img = (t && state.showLogos !== false)
-    ? `<img src="${escAttr(LOGO_URL(t))}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.parentNode.classList.add('has-img')" onerror="this.remove()">`
+    ? `<img src="${escAttr(LOGO_URL(t))}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="if (this.naturalWidth < 20) { this.remove(); } else { this.parentNode.classList.add('has-img'); }" onerror="this.remove()">`
     : '';
   return `<span class="tlogo tlogo-${size}" style="--c:${hashColor(t || '?')}" data-logo-ticker="${escAttr(t)}"><span class="tlogo-txt">${escAttr(initials(t || '?'))}</span>${img}</span>`;
 }

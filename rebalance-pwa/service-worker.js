@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rebalance-assistant-v7';
+const CACHE_NAME = 'rebalance-assistant-v8';
 // Note: no './index.html' here. Cloudflare Pages redirects /index.html -> /,
 // and a cached redirect served to a page navigation fails with ERR_FAILED.
 const LOGO_CACHE = 'allocate-logos-v1';
